@@ -1,0 +1,444 @@
+@import 'tailwindcss';
+
+/*
+  Paletas do EcoTire. Os utilitários do Tailwind (text-eco, bg-ink, border-line...) leem estas variáveis,
+  então trocar o atributo data-theme no <html> troca o app inteiro.
+  "white" = cor do texto principal; "paper" = superfície dos cartões; "eco" = cor de destaque da marca.
+*/
+@theme {
+  --color-white: #f1efec;
+  --color-paper: #171718;
+  --color-ink: #0c0c0d;
+  --color-panel: #111112;
+  --color-line: #2b2b2d;
+  --color-mist: #9d9a9f;
+  --color-eco: #ff6a1a;
+  --color-eco2: #ff8f4d;
+  --color-cyan: #8ec5ff;
+  --color-amber: #fbbf24;
+  --color-danger: #fb7185;
+  --color-violet: #a78bfa;
+  --color-good: #34d399;
+
+  /* identidade "Borracha": Archivo. Títulos usam a largura expandida, como as letras da lateral de um pneu. */
+  --font-sans: 'Archivo Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Archivo Variable', system-ui, sans-serif;
+
+  /* cantos contidos: peças de borracha e metal, não bolhas */
+  --radius-xl: 0.5rem;
+  --radius-2xl: 0.625rem;
+  --radius-3xl: 0.875rem;
+}
+
+.font-display {
+  font-stretch: 125%;
+  letter-spacing: -0.01em;
+}
+
+:root {
+  --on-accent: #140700;
+  --glass: 17 17 18;
+}
+[data-theme='ocean'] {
+  --color-paper: #10203a;
+  --color-ink: #07111f;
+  --color-panel: #0b1830;
+  --color-line: #1f3558;
+  --color-mist: #8fa6c4;
+  --color-eco: #22d3ee;
+  --color-eco2: #60a5fa;
+  --color-cyan: #a5b4fc;
+  --on-accent: #031a22;
+  --glass: 11 24 48;
+}
+[data-theme='forest'] {
+  --color-paper: #13211a;
+  --color-ink: #08110c;
+  --color-panel: #0e1a14;
+  --color-line: #24392d;
+  --color-mist: #94ad9f;
+  --color-eco: #a3e635;
+  --color-eco2: #34d399;
+  --color-cyan: #5eead4;
+  --on-accent: #101a03;
+  --glass: 14 26 20;
+}
+[data-theme='amethyst'] {
+  --color-paper: #1e1630;
+  --color-ink: #100b18;
+  --color-panel: #171026;
+  --color-line: #33264d;
+  --color-mist: #a79bbd;
+  --color-eco: #c084fc;
+  --color-eco2: #f472b6;
+  --color-cyan: #7dd3fc;
+  --on-accent: #1b0a2a;
+  --glass: 23 16 38;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink);
+  color: var(--color-white);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* Painel flutuante: borracha fosca com grão fino */
+.glass {
+  background:
+    radial-gradient(rgb(255 255 255 / 0.035) 0.6px, transparent 0.8px) 0 0 / 4px 4px,
+    rgb(var(--glass) / 0.94);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--color-line);
+  box-shadow: 0 30px 70px -30px rgb(0 0 0 / 0.95), inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+/* Letras em relevo tom sobre tom, como na lateral do pneu */
+.emboss {
+  font-family: var(--font-display);
+  font-stretch: 125%;
+  font-weight: 900;
+  line-height: 0.82;
+  letter-spacing: -0.03em;
+  color: color-mix(in srgb, var(--color-ink) 91%, #fff);
+  text-shadow: 0 -1px 0 rgb(255 255 255 / 0.07), 0 2px 3px #000;
+  user-select: none;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Divisor de banda de rodagem */
+.tread {
+  height: 18px;
+  background: repeating-linear-gradient(115deg, color-mix(in srgb, var(--color-ink) 78%, #fff) 0 11px, transparent 11px 18px);
+}
+
+/* Barra de progresso em segmentos, como indicador de desgaste */
+.wearbar {
+  background: repeating-linear-gradient(90deg, var(--color-eco) 0 7px, transparent 7px 10px);
+}
+
+.card {
+  background: var(--color-paper);
+  border: 1px solid var(--color-line);
+  border-radius: 0.625rem;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 14px 30px -20px rgb(0 0 0 / 0.8);
+}
+
+/* Cartão 3D que inclina seguindo o ponteiro (componente Tilt) */
+.tilt {
+  transform: perspective(700px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition: transform 0.18s ease-out, box-shadow 0.18s ease-out, border-color 0.18s;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+.tilt:hover {
+  border-color: color-mix(in srgb, var(--color-eco) 55%, var(--color-line));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 26px 44px -24px color-mix(in srgb, var(--color-eco) 70%, transparent);
+}
+.tilt > * {
+  transform: translateZ(14px);
+}
+
+.text-gradient {
+  color: var(--color-eco);
+}
+
+/* Medalha 3D das conquistas */
+.medal {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--on-accent);
+  background: radial-gradient(circle at 30% 25%, #fff3, transparent 45%), var(--color-eco);
+  box-shadow: inset 0 -4px 6px rgb(0 0 0 / 0.3), inset 0 3px 4px rgb(255 255 255 / 0.45), 0 8px 16px -6px var(--color-eco);
+  transform: perspective(300px) rotateX(18deg);
+  transition: transform 0.6s;
+}
+.medal.locked {
+  background: linear-gradient(140deg, #3a3f4a, #23262d);
+  box-shadow: inset 0 -4px 6px rgb(0 0 0 / 0.35), inset 0 2px 3px rgb(255 255 255 / 0.12);
+  color: var(--color-mist);
+}
+*:hover > .medal:not(.locked) {
+  transform: perspective(300px) rotateX(0deg) rotateY(360deg);
+}
+
+.field {
+  width: 100%;
+  background: rgb(0 0 0 / 0.28);
+  border: 1px solid var(--color-line);
+  border-radius: 0.5rem;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.875rem;
+  color: var(--color-white);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.field::placeholder {
+  color: color-mix(in srgb, var(--color-mist) 65%, transparent);
+}
+.field:focus {
+  border-color: var(--color-eco);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-eco) 22%, transparent);
+}
+select.field option {
+  background: var(--color-panel);
+  color: var(--color-white);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  padding: 0.65rem 1.15rem;
+  font-stretch: 112%;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: transform 0.1s, filter 0.15s, background 0.15s, opacity 0.15s;
+  cursor: pointer;
+}
+.btn:active {
+  transform: translateY(1px) scale(0.99);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-eco {
+  background: var(--color-eco);
+  color: var(--on-accent);
+}
+.btn-eco:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.btn-ghost {
+  background: transparent;
+  border: 1.5px solid color-mix(in srgb, var(--color-white) 55%, transparent);
+  color: var(--color-white);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.1);
+}
+.btn-danger {
+  background: var(--color-danger);
+  color: #25060c;
+}
+
+.label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--color-mist);
+  margin-bottom: 0.35rem;
+}
+
+input[type='range'] {
+  accent-color: var(--color-eco);
+  width: 100%;
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-eco);
+  outline-offset: 2px;
+}
+
+/* Marcadores do mapa */
+.eco-pin {
+  --pin: var(--color-eco);
+  width: 30px;
+  height: 30px;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--pin);
+  color: #0e0f12;
+  font: 700 13px var(--font-display);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--pin) 28%, transparent), 0 8px 16px rgb(0 0 0 / 0.6);
+}
+.eco-pin span {
+  display: inline-block;
+  transform: rotate(45deg);
+}
+.eco-car {
+  width: 36px;
+  height: 36px;
+  background: #fff;
+  clip-path: polygon(50% 0%, 92% 100%, 50% 78%, 8% 100%);
+  filter: drop-shadow(0 0 4px var(--color-eco)) drop-shadow(0 0 12px var(--color-eco));
+}
+
+/* MapLibre no tema escuro */
+.maplibregl-popup-content {
+  background: var(--color-panel);
+  color: var(--color-white);
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: 13px var(--font-sans);
+}
+.maplibregl-popup-content div {
+  color: var(--color-mist);
+  font-size: 12px;
+}
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: var(--color-panel);
+}
+.maplibregl-popup-anchor-top .maplibregl-popup-tip {
+  border-bottom-color: var(--color-panel);
+}
+.maplibregl-ctrl-group {
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+}
+.maplibregl-ctrl-group button + button {
+  border-top-color: var(--color-line);
+}
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: invert(1);
+}
+.maplibregl-ctrl-attrib {
+  background: rgb(var(--glass) / 0.7) !important;
+  color: var(--color-mist);
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--color-mist);
+}
+
+/* Cartão que expande (painel) */
+.expand {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.35s ease;
+}
+.expand[data-open='true'] {
+  grid-template-rows: 1fr;
+}
+.expand > div {
+  overflow: hidden;
+}
+
+@keyframes alert-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--alert) 55%, transparent); }
+  50% { box-shadow: 0 0 0 14px transparent; }
+}
+.alert-pulse {
+  animation: alert-pulse 1.4s ease-out infinite;
+}
+
+:root {
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Movimento: uma curva só para o app inteiro, entradas curtas e sem repetição. */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+.rise {
+  animation: rise 0.5s var(--ease) both;
+}
+/* itens de lista entram em sequência (ranking, frota) */
+.stagger {
+  animation: rise 0.5s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+/* troca de tela dentro de um painel */
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(10px); filter: blur(3px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+.view-in {
+  animation: view-in 0.45s var(--ease) both;
+}
+/* entrada das peças fixas quando o app abre */
+@keyframes enter-top {
+  from { opacity: 0; transform: translateY(-24px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes enter-side {
+  from { opacity: 0; transform: translateX(-32px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes enter-bottom {
+  from { opacity: 0; transform: translateY(40px); }
+  to { opacity: 1; transform: none; }
+}
+.enter-top {
+  animation: enter-top 0.7s var(--ease) 0.15s both;
+}
+.enter-panel {
+  animation: enter-bottom 0.7s var(--ease) 0.3s both;
+}
+@media (min-width: 1024px) {
+  .enter-panel {
+    animation-name: enter-side;
+  }
+}
+/* alerta de zona: cai de cima com um leve quique */
+@keyframes drop-in {
+  0% { opacity: 0; transform: translateY(-28px) scale(0.96); }
+  60% { opacity: 1; transform: translateY(4px) scale(1.01); }
+  100% { transform: none; }
+}
+.drop-in {
+  animation: drop-in 0.55s var(--ease) both;
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.94) translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.pop-in {
+  animation: pop-in 0.4s var(--ease) both;
+}
+/* carregando: brilho que percorre o bloco */
+@keyframes shimmer {
+  to { background-position: -200% 0; }
+}
+.skeleton {
+  border-radius: 0.5rem;
+  background: linear-gradient(90deg, var(--color-line) 25%, color-mix(in srgb, var(--color-line) 60%, #fff 8%) 50%, var(--color-line) 75%) 0 0 / 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+.btn,
+.card,
+.field {
+  transition-timing-function: var(--ease);
+}
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alert-pulse,
+  .rise,
+  .stagger,
+  .view-in,
+  .enter-top,
+  .enter-panel,
+  .drop-in,
+  .pop-in,
+  .skeleton {
+    animation: none;
+  }
+  .expand {
+    transition: none;
+  }
+}
