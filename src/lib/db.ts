@@ -5,6 +5,13 @@
 import type { RankEntry } from '@/lib/insights';
 import { DEFAULT_RADIUS_M, type RiskType, type RiskZone } from '@/lib/risk';
 import { supabase, type NewTrip, type Trip } from '@/lib/supabase';
+
+/** Quando o visitante escolhe "Testar sem conta", tudo fica no navegador mesmo com o banco ligado. */
+let localOnly = false;
+export const setLocalOnly = (v: boolean) => {
+  localOnly = v;
+};
+const remote = () => (localOnly ? null : supabase);
 import type { Vehicle } from '@/lib/vehicles';
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -31,27 +38,27 @@ function fail(error: { message: string } | null) {
 // ---------- Viagens ----------
 
 export async function listTrips(userId: string): Promise<Trip[]> {
-  if (!supabase) return localGet<Trip>(`trips:${userId}`);
-  const { data, error } = await supabase.from('trips').select('*').order('created_at', { ascending: false }).limit(200);
+  if (!remote()) return localGet<Trip>(`trips:${userId}`);
+  const { data, error } = await remote()!.from('trips').select('*').order('created_at', { ascending: false }).limit(200);
   fail(error);
   return (data ?? []) as Trip[];
 }
 
 export async function insertTrip(userId: string, trip: NewTrip): Promise<void> {
-  if (!supabase) {
+  if (!remote()) {
     const rows = localGet<Trip>(`trips:${userId}`);
     localSet(`trips:${userId}`, [{ ...trip, id: uid(), user_id: userId, created_at: new Date().toISOString() }, ...rows]);
     return;
   }
-  fail((await supabase.from('trips').insert(trip)).error);
+  fail((await remote()!.from('trips').insert(trip)).error);
 }
 
 export async function deleteTrip(userId: string, id: string): Promise<void> {
-  if (!supabase) {
+  if (!remote()) {
     localSet(`trips:${userId}`, localGet<Trip>(`trips:${userId}`).filter((t) => t.id !== id));
     return;
   }
-  fail((await supabase.from('trips').delete().eq('id', id)).error);
+  fail((await remote()!.from('trips').delete().eq('id', id)).error);
 }
 
 // ---------- Veículos cadastrados pelo usuário ----------
@@ -72,30 +79,30 @@ const rowToVehicle = (r: VehicleRow): Vehicle => ({
 export type NewVehicle = { name: string; category: string; curbWeightKg: number; trunkCapacityKg: number; maxPassengers: number };
 
 export async function listVehicles(userId: string): Promise<Vehicle[]> {
-  if (!supabase) return localGet<VehicleRow>(`vehicles:${userId}`).map(rowToVehicle);
-  const { data, error } = await supabase.from('vehicles').select('*').order('created_at');
+  if (!remote()) return localGet<VehicleRow>(`vehicles:${userId}`).map(rowToVehicle);
+  const { data, error } = await remote()!.from('vehicles').select('*').order('created_at');
   fail(error);
   return ((data ?? []) as VehicleRow[]).map(rowToVehicle);
 }
 
 export async function insertVehicle(userId: string, v: NewVehicle): Promise<Vehicle> {
   const row = { name: v.name, category: v.category, curb_weight_kg: v.curbWeightKg, trunk_capacity_kg: v.trunkCapacityKg, max_passengers: v.maxPassengers };
-  if (!supabase) {
+  if (!remote()) {
     const saved: VehicleRow = { ...row, id: uid() };
     localSet(`vehicles:${userId}`, [...localGet<VehicleRow>(`vehicles:${userId}`), saved]);
     return rowToVehicle(saved);
   }
-  const { data, error } = await supabase.from('vehicles').insert(row).select().single();
+  const { data, error } = await remote()!.from('vehicles').insert(row).select().single();
   fail(error);
   return rowToVehicle(data as VehicleRow);
 }
 
 export async function deleteVehicle(userId: string, id: string): Promise<void> {
-  if (!supabase) {
+  if (!remote()) {
     localSet(`vehicles:${userId}`, localGet<VehicleRow>(`vehicles:${userId}`).filter((v) => v.id !== id));
     return;
   }
-  fail((await supabase.from('vehicles').delete().eq('id', id)).error);
+  fail((await remote()!.from('vehicles').delete().eq('id', id)).error);
 }
 
 // ---------- Zonas de risco reportadas ----------
@@ -117,42 +124,42 @@ const rowToZone = (r: ZoneRow): RiskZone => ({
 export type NewZone = { name: string; type: RiskType; lat: number; lng: number; radiusM: number; note?: string };
 
 export async function listRiskZones(): Promise<RiskZone[]> {
-  if (!supabase) {
+  if (!remote()) {
     const votes = localGet<{ id: string; up: boolean }>('zone-votes');
     return localGet<ZoneRow>('zones').filter((z) => !votes.some((v) => v.id === z.id && !v.up)).map(rowToZone);
   }
-  const { data, error } = await supabase.rpc('live_risk_zones');
+  const { data, error } = await remote()!.rpc('live_risk_zones');
   fail(error);
   return ((data ?? []) as (ZoneRow & { confirms: number })[]).map((r) => ({ ...rowToZone(r), confirms: Number(r.confirms) || 0 }));
 }
 
 /** "Ainda está aí?": confirma ou nega uma zona reportada por outra pessoa. */
 export async function voteZone(zoneId: string, stillThere: boolean): Promise<void> {
-  if (!supabase) {
+  if (!remote()) {
     localSet('zone-votes', [...localGet<{ id: string; up: boolean }>('zone-votes').filter((v) => v.id !== zoneId), { id: zoneId, up: stillThere }]);
     return;
   }
-  fail((await supabase.from('zone_votes').upsert({ zone_id: zoneId, still_there: stillThere, voted_at: new Date().toISOString() })).error);
+  fail((await remote()!.from('zone_votes').upsert({ zone_id: zoneId, still_there: stillThere, voted_at: new Date().toISOString() })).error);
 }
 
 export async function insertRiskZone(userId: string, z: NewZone): Promise<RiskZone> {
   const row = { name: z.name, type: z.type, lat: z.lat, lng: z.lng, radius_m: z.radiusM, note: z.note ?? null };
-  if (!supabase) {
+  if (!remote()) {
     const saved: ZoneRow = { ...row, id: uid(), user_id: userId };
     localSet('zones', [...localGet<ZoneRow>('zones'), saved]);
     return rowToZone(saved);
   }
-  const { data, error } = await supabase.from('risk_zones').insert(row).select().single();
+  const { data, error } = await remote()!.from('risk_zones').insert(row).select().single();
   fail(error);
   return rowToZone(data as ZoneRow);
 }
 
 export async function deleteRiskZone(id: string): Promise<void> {
-  if (!supabase) {
+  if (!remote()) {
     localSet('zones', localGet<ZoneRow>('zones').filter((z) => z.id !== id));
     return;
   }
-  fail((await supabase.from('risk_zones').delete().eq('id', id)).error);
+  fail((await remote()!.from('risk_zones').delete().eq('id', id)).error);
 }
 
 // ---------- Perfil e ranking semanal ----------
@@ -160,24 +167,24 @@ export async function deleteRiskZone(id: string): Promise<void> {
 export type Profile = { nickname: string; showInRanking: boolean; avatar?: string | null };
 
 export async function getProfile(userId: string): Promise<Profile | null> {
-  if (!supabase) return localGet<Profile>(`profile:${userId}`)[0] ?? null;
-  const { data, error } = await supabase.from('profiles').select('nickname, show_in_ranking, avatar').eq('user_id', userId).maybeSingle();
+  if (!remote()) return localGet<Profile>(`profile:${userId}`)[0] ?? null;
+  const { data, error } = await remote()!.from('profiles').select('nickname, show_in_ranking, avatar').eq('user_id', userId).maybeSingle();
   fail(error);
   return data ? { nickname: data.nickname as string, showInRanking: !!data.show_in_ranking, avatar: (data.avatar as string | null) ?? null } : null;
 }
 
 export async function saveProfile(userId: string, p: Profile): Promise<void> {
-  if (!supabase) {
+  if (!remote()) {
     localSet(`profile:${userId}`, [p]);
     return;
   }
-  fail((await supabase.from('profiles').upsert({ user_id: userId, nickname: p.nickname, show_in_ranking: p.showInRanking, avatar: p.avatar ?? null, updated_at: new Date().toISOString() })).error);
+  fail((await remote()!.from('profiles').upsert({ user_id: userId, nickname: p.nickname, show_in_ranking: p.showInRanking, avatar: p.avatar ?? null, updated_at: new Date().toISOString() })).error);
 }
 
 /** Ranking da semana vindo do banco. null no modo demonstração (não há outros usuários). */
 export async function weeklyLeaderboard(): Promise<RankEntry[] | null> {
-  if (!supabase) return null;
-  const { data, error } = await supabase.rpc('weekly_leaderboard');
+  if (!remote()) return null;
+  const { data, error } = await remote()!.rpc('weekly_leaderboard');
   fail(error);
   return ((data ?? []) as { nickname: string; avatar: string | null; eco_score: number; distance_km: number; zones_respected: number; is_me: boolean }[]).map((r) => ({
     nickname: r.nickname,
@@ -195,7 +202,7 @@ export type HeatCell = { lat: number; lng: number; mg: number };
 
 export async function addHeat(cells: HeatCell[]): Promise<void> {
   if (!cells.length) return;
-  if (!supabase) {
+  if (!remote()) {
     const all = new Map(localGet<HeatCell>('heat').map((c) => [`${c.lat},${c.lng}`, c]));
     for (const c of cells) {
       const k = `${c.lat},${c.lng}`;
@@ -204,12 +211,12 @@ export async function addHeat(cells: HeatCell[]): Promise<void> {
     localSet('heat', [...all.values()].slice(-4000));
     return;
   }
-  fail((await supabase.rpc('add_heat', { cells: cells.slice(0, 800) })).error);
+  fail((await remote()!.rpc('add_heat', { cells: cells.slice(0, 800) })).error);
 }
 
 export async function listHeat(b: { south: number; west: number; north: number; east: number }): Promise<HeatCell[]> {
-  if (!supabase) return localGet<HeatCell>('heat').filter((c) => c.lat >= b.south && c.lat <= b.north && c.lng >= b.west && c.lng <= b.east);
-  const { data, error } = await supabase
+  if (!remote()) return localGet<HeatCell>('heat').filter((c) => c.lat >= b.south && c.lat <= b.north && c.lng >= b.west && c.lng <= b.east);
+  const { data, error } = await remote()!
     .from('emission_cells')
     .select('cell_lat, cell_lng, mg')
     .gte('cell_lat', b.south).lte('cell_lat', b.north).gte('cell_lng', b.west).lte('cell_lng', b.east)
@@ -220,7 +227,7 @@ export async function listHeat(b: { south: number; west: number; north: number; 
 
 // ---------- Frotas (precisam do banco: juntam dados de várias contas) ----------
 
-export const fleetsAvailable = !!supabase;
+export const fleetsAvailable = !!remote();
 export type GroupKind = 'fleet' | 'league';
 export type Fleet = { id: string; name: string; code: string; isOwner: boolean; members: number; kind: GroupKind };
 export type FleetMember = {
@@ -229,32 +236,32 @@ export type FleetMember = {
 };
 
 export async function myFleets(): Promise<Fleet[]> {
-  if (!supabase) return [];
-  const { data, error } = await supabase.rpc('my_fleets');
+  if (!remote()) return [];
+  const { data, error } = await remote()!.rpc('my_fleets');
   fail(error);
   return ((data ?? []) as { id: string; name: string; code: string; is_owner: boolean; members: number; kind: GroupKind }[]).map((r) => ({ id: r.id, name: r.name, code: r.code, isOwner: r.is_owner, members: Number(r.members), kind: r.kind ?? 'fleet' }));
 }
 
 export async function createFleet(name: string, nickname: string, kind: GroupKind = 'fleet'): Promise<string> {
-  if (!supabase) throw new Error('Frotas precisam do banco de dados configurado.');
-  const { data, error } = await supabase.rpc('create_fleet', { p_name: name, p_nickname: nickname, p_kind: kind });
+  if (!remote()) throw new Error('Frotas precisam do banco de dados configurado.');
+  const { data, error } = await remote()!.rpc('create_fleet', { p_name: name, p_nickname: nickname, p_kind: kind });
   fail(error);
   return data as string;
 }
 
 export async function joinFleet(code: string, nickname: string): Promise<void> {
-  if (!supabase) throw new Error('Frotas precisam do banco de dados configurado.');
-  fail((await supabase.rpc('join_fleet', { p_code: code, p_nickname: nickname })).error);
+  if (!remote()) throw new Error('Frotas precisam do banco de dados configurado.');
+  fail((await remote()!.rpc('join_fleet', { p_code: code, p_nickname: nickname })).error);
 }
 
 export async function leaveFleet(id: string): Promise<void> {
-  if (!supabase) return;
-  fail((await supabase.rpc('leave_fleet', { p_fleet: id })).error);
+  if (!remote()) return;
+  fail((await remote()!.rpc('leave_fleet', { p_fleet: id })).error);
 }
 
 export async function fleetOverview(id: string): Promise<FleetMember[]> {
-  if (!supabase) return [];
-  const { data, error } = await supabase.rpc('fleet_overview', { p_fleet: id });
+  if (!remote()) return [];
+  const { data, error } = await remote()!.rpc('fleet_overview', { p_fleet: id });
   fail(error);
   type Row = { nickname: string; avatar: string | null; is_me: boolean; is_owner: boolean; eco_score: number | null; distance_km: number; pm25_mg: number; zones_respected: number; driving: boolean | null; lat: number | null; lng: number | null; speed_kmh: number | null; level: string | null };
   return ((data ?? []) as Row[]).map((r) => ({
@@ -266,11 +273,11 @@ export async function fleetOverview(id: string): Promise<FleetMember[]> {
 
 /** Posição ao vivo durante a viagem (só o gestor da sua frota vê). Falhas são ignoradas: não podem atrapalhar a viagem. */
 export async function pushLiveStatus(userId: string, s: { lat: number; lng: number; speedKmh: number; level: string }): Promise<void> {
-  if (!supabase) return;
-  await supabase.from('live_status').upsert({ user_id: userId, lat: s.lat, lng: s.lng, speed_kmh: Math.round(s.speedKmh), level: s.level, updated_at: new Date().toISOString() });
+  if (!remote()) return;
+  await remote()!.from('live_status').upsert({ user_id: userId, lat: s.lat, lng: s.lng, speed_kmh: Math.round(s.speedKmh), level: s.level, updated_at: new Date().toISOString() });
 }
 
 export async function clearLiveStatus(userId: string): Promise<void> {
-  if (!supabase) return;
-  await supabase.from('live_status').delete().eq('user_id', userId);
+  if (!remote()) return;
+  await remote()!.from('live_status').delete().eq('user_id', userId);
 }

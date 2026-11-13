@@ -1,15 +1,12 @@
 import { ArrowRight, Building2, Loader2, ShieldCheck, User, Volume2, Waypoints } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { AirField } from '@/components/AirField';
-import { Tire3D } from '@/components/Tire3D';
 import { useAuth, type Usage } from '@/hooks/useAuth';
-import { useTheme } from '@/lib/theme';
 
 type Mode = 'signin' | 'signup' | 'reset';
 
 export function AuthScreen() {
   const { hasBackend, signIn, signUp, resetPassword, enterDemo } = useAuth();
-  const theme = useTheme();
   const [mode, setMode] = useState<Mode>('signin');
   const [name, setName] = useState('');
   const [usage, setUsageChoice] = useState<Usage>('personal');
@@ -25,11 +22,23 @@ export function AuthScreen() {
     setInfo(null);
     if (!hasBackend) return enterDemo(name, usage);
     setBusy(true);
+    const mail = email.trim().toLowerCase();
+    if (mode !== 'reset' && !/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(mail)) {
+      setError('Digite um e-mail válido, por exemplo nome@gmail.com.');
+      setBusy(false);
+      return;
+    }
+    if (mode === 'signup' && password.length < 6) {
+      setError('A senha precisa ter pelo menos 6 caracteres.');
+      setBusy(false);
+      return;
+    }
     if (mode === 'signin') {
-      setError(await signIn(email.trim(), password));
+      setError(await signIn(mail, password));
     } else if (mode === 'signup') {
-      const r = await signUp(name.trim(), email.trim(), password, usage);
+      const r = await signUp(name.trim(), mail, password, usage);
       setError(r.error);
+      if (r.error && /já tem conta/.test(r.error)) setMode('signin');
       if (r.needsConfirmation) {
         setInfo('Conta criada. Abra o link de confirmação que enviamos para o seu e-mail e depois entre.');
         setMode('signin');
@@ -59,7 +68,7 @@ export function AuthScreen() {
                 <div className="text-xs tracking-[0.2em] text-mist" style={{ fontStretch: '125%' }}>PM2.5 / PM10</div>
               </div>
             </div>
-            <Tire3D intensity={0.35} speedKmh={45} theme={theme} className="mt-4 h-64 w-full max-w-xl sm:h-80" />
+            <div className="h-48 sm:h-64" aria-hidden="true" />
             <h1 className="max-w-xl font-display text-4xl font-extrabold leading-[1.02] sm:text-5xl">Cada freada deixa borracha no ar.</h1>
             <p className="mt-4 max-w-lg text-mist">
               O EcoTire estima, de forma aproximada e em tempo real, o material particulado que o desgaste dos pneus solta, e
@@ -144,6 +153,11 @@ export function AuthScreen() {
                 <button type="button" className="text-cyan hover:underline" onClick={() => { setMode('signin'); setError(null); }}>Já tenho conta</button>
               )}
             </div>
+          )}
+          {hasBackend && (
+            <button type="button" className="btn mt-4 w-full border border-line py-2.5 text-sm text-mist hover:text-white" onClick={() => enterDemo(name.trim() || 'Visitante', usage)}>
+              Testar sem conta (dados ficam só neste navegador)
+            </button>
           )}
         </form>
       </div>

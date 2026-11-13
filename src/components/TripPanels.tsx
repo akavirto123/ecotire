@@ -1,11 +1,10 @@
 import {
-  AlertTriangle, Construction, Crosshair, Flag, Gauge, GraduationCap, HeartPulse, Leaf, Loader2, LocateFixed,
+  Activity, AlertTriangle, Construction, Crosshair, Flag, Gauge, GraduationCap, HeartPulse, Leaf, Loader2, LocateFixed,
   MapPin, MapPinPlus, Navigation, Play, Route as RouteIcon, Save, Sparkles, Square, Timer, TriangleAlert, Wind, Zap,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Tire3D } from '@/components/Tire3D';
+import { LiveGauge } from '@/components/LiveGauge';
 import { AnimatedValue, Tilt } from '@/components/ui';
-import { useTheme } from '@/lib/theme';
 import type { LiveState, TripSummary } from '@/hooks/useLiveTrip';
 import { EMISSION_COLORS, EMISSION_LABELS, simulateTrip, toPm10 } from '@/lib/emissions';
 import type { Pt } from '@/lib/geo';
@@ -347,14 +346,17 @@ export function AlertBanner({ alert }: { alert: RiskAlert }) {
 
 // ---------- Painel durante a viagem ----------
 
-export function DriveHud({ live, street, onStop, saving, onQuickReport, votePrompt, onVote }: {
+export type BumpSensorUi = { supported: boolean; on: boolean; count: number; onToggle: () => void; onSimulate: () => void };
+
+export function DriveHud({ live, street, onStop, saving, onQuickReport, votePrompt, onVote, sensor }: {
   live: LiveState; street: string | null; onStop: () => void; saving: boolean;
   onQuickReport: (t: RiskType) => void; votePrompt: RiskZone | null; onVote: (zoneId: string, stillThere: boolean) => void;
+  sensor: BumpSensorUi;
 }) {
   const color = EMISSION_COLORS[live.level];
-  const intensity = live.level === 'high' ? 1 : live.level === 'moderate' ? 0.55 : Math.min(0.3, live.speedKmh / 200);
+  const levelBase = live.level === 'high' ? 0.82 : live.level === 'moderate' ? 0.5 : 0.08 + Math.min(0.2, live.speedKmh / 300);
+  const intensity = Math.min(1, Math.max(levelBase, live.accelG / 0.45));
   const zoneShare = live.pm25Mg > 0 ? (live.pm25InZonesMg / live.pm25Mg) * 100 : 0;
-  const theme = useTheme();
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-sm text-mist">
@@ -371,7 +373,7 @@ export function DriveHud({ live, street, onStop, saving, onQuickReport, voteProm
             <Wind className="h-4 w-4" /> Emissão {EMISSION_LABELS[live.level].toLowerCase()}
           </div>
         </div>
-        <Tire3D intensity={intensity} speedKmh={live.speedKmh} theme={theme} className="h-40 w-full" />
+        <LiveGauge intensity={intensity} tick={live.elapsedS} label={`Emissão ${EMISSION_LABELS[live.level].toLowerCase()}`} />
       </div>
 
       <p className="text-sm text-white/80">
@@ -420,6 +422,30 @@ export function DriveHud({ live, street, onStop, saving, onQuickReport, voteProm
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {live.pos && (
+        <div className="rounded-xl border border-line bg-white/[0.03] p-3">
+          <div className="flex items-center gap-3">
+            <Activity className={`h-5 w-5 shrink-0 ${sensor.on ? 'text-eco' : 'text-mist'}`} />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold">Detecção automática de buracos</div>
+              <div className="text-xs text-mist">
+                {sensor.on
+                  ? `Sensor ligado: o solavanco vira aviso sozinho${sensor.count ? ` (${sensor.count} detectado${sensor.count > 1 ? 's' : ''})` : ''}.`
+                  : sensor.supported ? 'Usa o acelerômetro do celular. No carro, seriam a suspensão e as câmeras.' : 'Este aparelho não tem acelerômetro. Use a simulação.'}
+              </div>
+            </div>
+            {sensor.supported && (
+              <button type="button" role="switch" aria-checked={sensor.on} onClick={sensor.onToggle} className={`relative h-6 w-11 shrink-0 rounded-full transition ${sensor.on ? 'bg-eco' : 'bg-white/15'}`} aria-label="Ligar detecção automática de buracos">
+                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${sensor.on ? 'left-[22px]' : 'left-0.5'}`} />
+              </button>
+            )}
+          </div>
+          <button type="button" onClick={sensor.onSimulate} className="mt-2 w-full rounded-lg border border-dashed border-line py-1.5 text-xs text-mist hover:border-eco hover:text-white">
+            Demonstração: simular um solavanco agora
+          </button>
         </div>
       )}
 

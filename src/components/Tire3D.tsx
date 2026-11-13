@@ -59,11 +59,16 @@ export function Tire3D({ intensity, speedKmh = 40, theme = '', className }: Prop
     rig.scale.setScalar(1.07 / 0.384);
     scene.add(rig);
     let alive = true;
+    const brakeMats: THREE.MeshStandardMaterial[] = [];
     loadWheel()
       .then((gltf) => {
         if (!alive) return;
         const model = gltf.scene.clone(true);
         model.updateMatrixWorld(true);
+        // a roda veio do carro esterçada ~30°: usamos o referencial do próprio cubo (eixo = x local) para girar sem bambolear
+        const hub = model.getObjectByName('WheelFrontL');
+        const toHub = new THREE.Matrix4();
+        if (hub) toHub.copy(hub.matrixWorld).invert();
         const parts: THREE.Mesh[] = [];
         model.traverse((o) => {
           if ((o as THREE.Mesh).isMesh) parts.push(o as THREE.Mesh);
@@ -76,13 +81,19 @@ export function Tire3D({ intensity, speedKmh = 40, theme = '', className }: Prop
               mat.color.set(0x0d0d0e);
             } else if (mat.name === 'Brake') {
               mat.color.copy(accent);
+              brakeMats.push(mat);
             }
             return mat;
           });
           mesh.material = Array.isArray(mesh.material) ? mats : mats[0];
           // leva cada peça para o centro da roda (eixo em x), preservando a transformação original
-          mesh.applyMatrix4(new THREE.Matrix4().copy(mesh.parent!.matrixWorld));
-          mesh.position.sub(WHEEL_CENTER);
+          if (hub) {
+            mesh.matrixWorld.decompose(mesh.position, mesh.quaternion, mesh.scale);
+            mesh.applyMatrix4(toHub);
+          } else {
+            mesh.applyMatrix4(new THREE.Matrix4().copy(mesh.parent!.matrixWorld));
+            mesh.position.sub(WHEEL_CENTER);
+          }
           (/BrakePad/.test(mesh.name) || /BrakePad/.test(mesh.parent?.name ?? '') ? fixed : wheel).add(mesh);
         }
       })
@@ -114,12 +125,20 @@ export function Tire3D({ intensity, speedKmh = 40, theme = '', className }: Prop
     let raf = 0;
     let last = performance.now();
     let debt = 0;
+    let clamp = 0;
 
     const frame = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       const k = Math.max(0, Math.min(1, live.current.intensity));
       wheel.rotation.x += (reduce ? 0.3 : 0.8 + live.current.speedKmh / 14) * dt;
+      // pinça de freio: não gira (é presa na suspensão), mas aperta o disco e esquenta quando a condução fica agressiva
+      clamp += ((k > 0.45 ? 1 : 0) - clamp) * Math.min(1, dt * 6);
+      fixed.position.x = -0.006 * clamp;
+      for (const m of brakeMats) {
+        m.emissive.copy(accent);
+        m.emissiveIntensity = 0.15 + clamp * (1.6 + 0.5 * Math.sin(now / 90));
+      }
       tmp.copy(k < 0.5 ? low : mid).lerp(k < 0.5 ? mid : high, k < 0.5 ? k * 2 : (k - 0.5) * 2);
       pMat.color.copy(tmp);
 

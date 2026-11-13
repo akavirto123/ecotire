@@ -1,4 +1,4 @@
-import { CarFront, ChevronDown, ChevronUp, CircleHelp, Flame, LayoutDashboard, Loader2, LogOut, Navigation, Palette, Volume2, VolumeX } from 'lucide-react';
+import { BellRing, CarFront, ChevronDown, ChevronUp, CircleHelp, Flame, LayoutDashboard, Loader2, LogOut, Navigation, Palette, Volume2, VolumeX } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AuthScreen } from '@/components/AuthScreen';
 import { DashboardPanel, GaragePanel } from '@/components/DataPanels';
@@ -8,7 +8,8 @@ import { Tour, type TourStep } from '@/components/ui';
 import { useAuth, type AppUser } from '@/hooks/useAuth';
 import { useLiveTrip, type TripSummary } from '@/hooks/useLiveTrip';
 import { useRiskZones } from '@/hooks/useRiskZones';
-import { unlockAudio } from '@/lib/alerts';
+import { setVoiceEnabled, unlockAudio } from '@/lib/alerts';
+import { requestMotionPermission, motionSupported, startBumpSensor } from '@/lib/bumps';
 import { installTapSounds, setSfxMuted, sfx } from '@/lib/sfx';
 import { trainDriverModel } from '@/lib/ai';
 import * as db from '@/lib/db';
@@ -76,8 +77,19 @@ function Shell({ user }: { user: AppUser }) {
   const { signOut, setUsage } = useAuth();
   const isDesktop = useIsDesktop();
   const [tab, setTab] = useState<Tab>('trip');
-  const [soundOn, setSoundOn] = useStored('sound', true);
-  useEffect(() => setSfxMuted(!soundOn), [soundOn]);
+  // som: voz + bipes, só bipes, ou mudo
+  const [soundMode, setSoundMode] = useStored<'voice' | 'chime' | 'off'>('sound-mode', 'voice');
+  const soundOn = soundMode !== 'off';
+  useEffect(() => {
+    setSfxMuted(!soundOn);
+    setVoiceEnabled(soundMode === 'voice');
+  }, [soundMode, soundOn]);
+  const nextSound = () => {
+    unlockAudio();
+    const next = soundMode === 'voice' ? 'chime' : soundMode === 'chime' ? 'off' : 'voice';
+    setSoundMode(next);
+    setToast(next === 'voice' ? 'Avisos com voz' : next === 'chime' ? 'Só bipes, sem voz' : 'Sons desligados');
+  };
   useEffect(() => installTapSounds(), []);
   const [toast, setToast] = useState<string | null>(null);
   useEffect(() => {
@@ -339,6 +351,69 @@ function Shell({ user }: { user: AppUser }) {
     setToast(stillThere ? 'Obrigado: aviso confirmado.' : 'Obrigado: se outros também negarem, o aviso some.');
   };
 
+  // ----- detecção automática de buracos (acelerômetro; no carro: suspensão e câmeras) -----
+  const [bumpOn, setBumpOn] = useState(false);
+  const isTouch = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+  const [bumpCount, setBumpCount] = useState(0);
+  const communityRef = useRef(community);
+  communityRef.current = community;
+  const handleBump = useCallback(
+    async (strengthG: number, demo: boolean) => {
+      const p = liveRef.current.pos;
+      if (!p) return;
+      setBumpCount((n) => n + 1);
+      try {
+        navigator.vibrate?.([60, 40, 60]);
+      } catch {
+        /* sem vibração */
+      }
+      const near = communityRef.current
+        .filter((z) => z.type === 'pavement' && haversine(z, p) < 45)
+        .sort((a, b) => haversine(a, p) - haversine(b, p))[0];
+      if (near && near.userId === user.id) {
+        setToast('Solavanco no mesmo buraco que você já avisou.');
+        return;
+      }
+      if (near) {
+        if (!voted.current.has(near.id)) {
+          voted.current.add(near.id);
+          void db.voteZone(near.id, true).catch(() => undefined);
+        }
+        sfx('report');
+        setToast('Solavanco detectado: buraco confirmado automaticamente para a comunidade.');
+        return;
+      }
+      try {
+        const g = strengthG.toFixed(1).replace('.', ',');
+        const saved = await db.insertRiskZone(user.id, {
+          name: demo ? 'Buraco (sensor, demonstração)' : `Buraco (sensor, ${g} g)`,
+          type: 'pavement',
+          lat: p.lat,
+          lng: p.lng,
+          radiusM: DEFAULT_RADIUS_M.pavement,
+        });
+        setCommunity((c) => [...c, saved]);
+        sfx('report');
+        setToast(`Solavanco de ${g} g detectado: aviso de buraco criado sozinho.`);
+      } catch (e) {
+        setToast(`Não foi possível enviar: ${(e as Error).message}`);
+      }
+    },
+    [user.id],
+  );
+  useEffect(() => {
+    if (!live.state.active || !bumpOn) return;
+    return startBumpSensor(() => liveRef.current.speedKmh, (b) => void handleBump(b.strengthG, false));
+  }, [live.state.active, bumpOn, handleBump]);
+  useEffect(() => {
+    if (!live.state.active) setBumpCount(0);
+  }, [live.state.active]);
+  const toggleBump = async () => {
+    if (bumpOn) return setBumpOn(false);
+    if (await requestMotionPermission()) setBumpOn(true);
+    else setToast('O navegador não liberou o sensor de movimento.');
+  };
+
   // ----- reportar zona -----
   const [report, setReport] = useState<{ point: Pt | null } | null>(null);
   const saveZone = async (z: { name: string; type: RiskType; radiusM: number; note: string }) => {
@@ -422,8 +497,8 @@ function Shell({ user }: { user: AppUser }) {
           ))}
         </nav>
         <span className="hidden max-w-[180px] truncate rounded-xl border border-line px-3 py-1.5 text-xs text-mist md:block" title="Veículo selecionado">{vehicle.name}</span>
-        <button type="button" onClick={() => { unlockAudio(); setSoundOn(!soundOn); }} className="rounded-xl p-2 text-mist hover:bg-white/10 hover:text-white" aria-pressed={soundOn} aria-label={soundOn ? 'Desligar avisos sonoros' : 'Ligar avisos sonoros'} title={soundOn ? 'Avisos sonoros ligados' : 'Avisos sonoros desligados'}>
-          {soundOn ? <Volume2 className="h-5 w-5 text-eco" /> : <VolumeX className="h-5 w-5" />}
+        <button type="button" onClick={nextSound} className="rounded-xl p-2 text-mist hover:bg-white/10 hover:text-white" aria-label="Trocar modo de som: voz, só bipes ou mudo" title={soundMode === 'voice' ? 'Avisos com voz (clique: só bipes)' : soundMode === 'chime' ? 'Só bipes (clique: mudo)' : 'Mudo (clique: voz)'}>
+          {soundMode === 'voice' ? <Volume2 className="h-5 w-5 text-eco" /> : soundMode === 'chime' ? <BellRing className="h-5 w-5 text-eco" /> : <VolumeX className="h-5 w-5" />}
         </button>
         <div className="relative">
           <button type="button" onClick={() => setPaletteOpen(!paletteOpen)} className="rounded-xl p-2 text-mist hover:bg-white/10 hover:text-white" aria-expanded={paletteOpen} aria-label="Trocar paleta de cores" title="Paleta de cores"><Palette className="h-5 w-5" /></button>
@@ -482,7 +557,8 @@ function Shell({ user }: { user: AppUser }) {
           {report ? (
             <ReportZoneForm point={report.point} onCancel={() => { setReport(null); setCollapsed(false); }} onSave={saveZone} />
           ) : live.state.active ? (
-            <DriveHud live={live.state} street={street} onStop={finish} saving={saving} onQuickReport={(t) => void quickReport(t)} votePrompt={votePrompt} onVote={vote} />
+            <DriveHud live={live.state} street={street} onStop={finish} saving={saving} onQuickReport={(t) => void quickReport(t)} votePrompt={votePrompt} onVote={vote}
+              sensor={{ supported: motionSupported() && isTouch, on: bumpOn, count: bumpCount, onToggle: () => void toggleBump(), onSimulate: () => void handleBump(1.2 + Math.random() * 0.6, true) }} />
           ) : summary ? (
             <SummaryCard summary={summary} saveError={saveError} onClose={() => setSummary(null)} />
           ) : (

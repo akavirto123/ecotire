@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
+import { setLocalOnly } from '@/lib/db';
 
 /** pessoal = motorista comum; frota = gestor ou motorista de empresa (ESG) */
 export type Usage = 'personal' | 'fleet';
@@ -28,6 +29,10 @@ const ERRORS: [RegExp, string][] = [
   [/password should be at least/i, 'A senha precisa ter pelo menos 6 caracteres.'],
   [/rate limit|too many/i, 'Muitas tentativas. Aguarde um minuto e tente de novo.'],
   [/failed to fetch|network/i, 'Sem conexão com o servidor. Verifique a internet.'],
+  [/email address .* is invalid|invalid email|unable to validate email/i, 'O servidor recusou esse e-mail. Tente outro endereço (ex.: nome@gmail.com) ou use "Testar sem conta".'],
+  [/email rate limit|over_email_send_rate_limit/i, 'O servidor gratuito só envia poucos e-mails por hora. Tente daqui a pouco ou use "Testar sem conta".'],
+  [/signups? not allowed|signup is disabled/i, 'Cadastro de novas contas está desligado no Supabase.'],
+  [/weak password|password is too weak|pwned/i, 'Senha fraca. Use pelo menos 8 caracteres misturando letras e números.'],
 ];
 const translate = (msg: string) => ERRORS.find(([re]) => re.test(msg))?.[1] ?? msg;
 
@@ -36,16 +41,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!supabase) {
-      try {
-        const saved = localStorage.getItem(DEMO_KEY);
-        if (saved) {
-          const u = JSON.parse(saved) as Partial<AppUser>;
-          setUser({ ...(u as AppUser), usage: u.usage === 'fleet' ? 'fleet' : 'personal' });
-        }
-      } catch {
-        /* ignora */
+    let savedDemo: AppUser | null = null;
+    try {
+      const saved = localStorage.getItem(DEMO_KEY);
+      if (saved) {
+        const u = JSON.parse(saved) as Partial<AppUser>;
+        savedDemo = { ...(u as AppUser), usage: u.usage === 'fleet' ? 'fleet' : 'personal' };
       }
+    } catch {
+      /* ignora */
+    }
+    if (!supabase || savedDemo) {
+      setLocalOnly(!!supabase);
+      setUser(savedDemo);
       setLoading(false);
       return;
     }
@@ -83,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const enterDemo = useCallback((name: string, usage: Usage) => {
     const demo: AppUser = { id: 'demo', email: 'demo@local', name: name.trim() || 'Visitante', demo: true, usage };
+    setLocalOnly(!!supabase);
     try {
       localStorage.setItem(DEMO_KEY, JSON.stringify(demo));
     } catch {
@@ -92,7 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setUsage = useCallback(async (usage: Usage) => {
-    if (supabase) await supabase.auth.updateUser({ data: { usage } });
+    if (supabase && !user?.demo) await supabase.auth.updateUser({ data: { usage } });
     setUser((u) => {
       if (!u) return u;
       const next = { ...u, usage };
@@ -105,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return next;
     });
-  }, []);
+  }, [user]);
 
   const signOut = useCallback(async () => {
     try {
@@ -113,9 +122,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       /* ignora */
     }
-    if (supabase) await supabase.auth.signOut();
+    const wasDemo = user?.demo;
+    setLocalOnly(false);
+    if (supabase && !wasDemo) await supabase.auth.signOut();
     setUser(null);
-  }, []);
+  }, [user]);
 
   const value = useMemo(
     () => ({ user, loading, hasBackend: !!supabase, signIn, signUp, resetPassword, enterDemo, setUsage, signOut }),

@@ -42,14 +42,49 @@ export function playChime(urgent: boolean) {
   }
 }
 
+let voiceEnabled = true;
+/** Modo "só bipe": mantém os sons e desliga a fala. */
+export function setVoiceEnabled(v: boolean) {
+  voiceEnabled = v;
+  if (!v && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+}
+
+/** Prefere as vozes neurais (Edge "Natural"/"Online", Google) e evita português de Portugal. */
+function voiceScore(v: SpeechSynthesisVoice): number {
+  const lang = v.lang?.toLowerCase().replace('_', '-') ?? '';
+  if (!lang.startsWith('pt')) return -1;
+  let s = lang === 'pt-br' ? 100 : 10;
+  if (/natural|neural|online/i.test(v.name)) s += 60;
+  if (/google/i.test(v.name)) s += 40;
+  if (/francisca|thalita|antonio|luciana|felipe/i.test(v.name)) s += 20;
+  if (/maria|daniel|heloisa/i.test(v.name)) s -= 5; // vozes antigas do Windows, mais robóticas
+  if (!v.localService) s += 5;
+  return s;
+}
+let bestVoice: SpeechSynthesisVoice | null = null;
+function pickVoice(): SpeechSynthesisVoice | null {
+  if (bestVoice) return bestVoice;
+  const voices = window.speechSynthesis.getVoices().filter((v) => voiceScore(v) >= 0);
+  bestVoice = voices.sort((a, b) => voiceScore(b) - voiceScore(a))[0] ?? null;
+  return bestVoice;
+}
+if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  window.speechSynthesis.addEventListener?.('voiceschanged', () => {
+    bestVoice = null;
+  });
+}
+
 export function speak(text: string) {
   try {
-    if (!('speechSynthesis' in window)) return;
+    if (!voiceEnabled || !('speechSynthesis' in window)) return;
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'pt-BR';
-    u.rate = 1.05;
-    const voice = window.speechSynthesis.getVoices().find((v) => v.lang?.toLowerCase().startsWith('pt'));
+    const voice = pickVoice();
     if (voice) u.voice = voice;
+    // vozes neurais já soam naturais na velocidade normal; as antigas ficam melhores um pouco mais lentas
+    u.rate = voice && /natural|neural|online|google/i.test(voice.name) ? 1.0 : 0.95;
+    u.pitch = 1;
+    u.volume = 1;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(u);
   } catch {
@@ -60,9 +95,9 @@ export function speak(text: string) {
 export function alertMessage(a: RiskAlert): string {
   const meta = RISK_META[a.zone.type];
   const rush = a.zone.type === 'school' && isSchoolRush() ? ' Horário de entrada e saída de alunos.' : '';
-  if (a.stage === 'inside') return `Você está em ${meta.voice}. Mantenha até ${a.advisedKmh} quilômetros por hora e evite frear ou acelerar forte.${rush}`;
-  const dist = Math.round(a.distanceM / 10) * 10;
-  return `${meta.voice} a ${dist} metros. Reduza suavemente para ${a.advisedKmh} quilômetros por hora.${rush}`;
+  if (a.stage === 'inside') return `Você está em ${meta.voice}. Até ${a.advisedKmh}, sem frear forte.${rush}`;
+  const dist = Math.round(a.distanceM / 50) * 50 || 50;
+  return `${meta.voice} em ${dist} metros. Reduza para ${a.advisedKmh}.${rush}`;
 }
 
 /** Aviso sonoro + voz + vibração para um alerta de zona de risco. */
