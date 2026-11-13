@@ -1,16 +1,18 @@
 import { BellRing, CarFront, ChevronDown, ChevronUp, CircleHelp, Flame, LayoutDashboard, Loader2, LogOut, Navigation, Palette, Volume2, VolumeX } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// painel e garagem (com o 3D do carro) só baixam quando abertos: a primeira tela fica bem mais leve
+const DashboardPanel = lazy(() => import('@/components/DataPanels').then((m) => ({ default: m.DashboardPanel })));
+const GaragePanel = lazy(() => import('@/components/DataPanels').then((m) => ({ default: m.GaragePanel })));
 import { AuthScreen } from '@/components/AuthScreen';
-import { DashboardPanel, GaragePanel } from '@/components/DataPanels';
 import { Map3D, type MapRoute } from '@/components/Map3D';
 import { AlertBanner, DriveHud, PlannerPanel, ReportZoneForm, SummaryCard } from '@/components/TripPanels';
 import { Tour, type TourStep } from '@/components/ui';
 import { useAuth, type AppUser } from '@/hooks/useAuth';
 import { useLiveTrip, type TripSummary } from '@/hooks/useLiveTrip';
 import { useRiskZones } from '@/hooks/useRiskZones';
-import { setVoiceEnabled, unlockAudio } from '@/lib/alerts';
+import { preloadVoice, setVoiceChoice, setVoiceEnabled, speak, unlockAudio, type VoiceChoice } from '@/lib/alerts';
 import { requestMotionPermission, motionSupported, startBumpSensor } from '@/lib/bumps';
-import { installTapSounds, setSfxMuted, sfx } from '@/lib/sfx';
+import { setSfxMuted, sfx } from '@/lib/sfx';
 import { trainDriverModel } from '@/lib/ai';
 import * as db from '@/lib/db';
 import { simulateTrip, type TripAggregate } from '@/lib/emissions';
@@ -77,6 +79,13 @@ function Shell({ user }: { user: AppUser }) {
   const { signOut, setUsage } = useAuth();
   const isDesktop = useIsDesktop();
   const [tab, setTab] = useState<Tab>('trip');
+  // modo leve: liga sozinho em aparelhos mais fracos (poucos núcleos/memória ou celular)
+  const weakDevice = useMemo(() => {
+    const nav = navigator as Navigator & { deviceMemory?: number };
+    return (nav.hardwareConcurrency ?? 8) <= 4 || (nav.deviceMemory ?? 8) <= 4 || window.matchMedia('(pointer: coarse)').matches;
+  }, []);
+  const [lite, setLite] = useStored('lite-mode', weakDevice);
+
   // som: voz + bipes, só bipes, ou mudo
   const [soundMode, setSoundMode] = useStored<'voice' | 'chime' | 'off'>('sound-mode', 'voice');
   const soundOn = soundMode !== 'off';
@@ -84,13 +93,15 @@ function Shell({ user }: { user: AppUser }) {
     setSfxMuted(!soundOn);
     setVoiceEnabled(soundMode === 'voice');
   }, [soundMode, soundOn]);
+  const [voice, setVoice] = useStored<VoiceChoice>('voice-choice', 'dora');
+  useEffect(() => setVoiceChoice(voice), [voice]);
+  const say = speak; // a própria fala respeita o modo de som (voz, só bipe ou mudo)
   const nextSound = () => {
     unlockAudio();
     const next = soundMode === 'voice' ? 'chime' : soundMode === 'chime' ? 'off' : 'voice';
     setSoundMode(next);
     setToast(next === 'voice' ? 'Avisos com voz' : next === 'chime' ? 'Só bipes, sem voz' : 'Sons desligados');
   };
-  useEffect(() => installTapSounds(), []);
   const [toast, setToast] = useState<string | null>(null);
   useEffect(() => {
     if (!toast) return;
@@ -252,6 +263,8 @@ function Shell({ user }: { user: AppUser }) {
 
   const startGps = () => {
     sfx('start');
+    preloadVoice();
+    say('Viagem iniciada. Boa viagem.');
     setSummary(null);
     setStreet(null);
     void live.start('gps');
@@ -259,6 +272,7 @@ function Shell({ user }: { user: AppUser }) {
   const startSim = () => {
     if (!selectedRoute) return;
     sfx('start');
+    say('Viagem iniciada. Boa viagem.');
     setSummary(null);
     setStreet(null);
     // acelera o tempo para a simulação durar cerca de um minuto e meio
@@ -269,6 +283,7 @@ function Shell({ user }: { user: AppUser }) {
     const columns = columnsRef.current;
     const s = live.stop();
     sfx('stop');
+    say('Você chegou. Viagem salva.');
     setSummary(s);
     const mode: Trip['mode'] = s.mode === 'gps' && passenger ? 'passenger' : s.mode;
     void save(toRow(s, mode, s.zonesHit, s.startedAt, s.zonesRespected));
@@ -380,6 +395,7 @@ function Shell({ user }: { user: AppUser }) {
           void db.voteZone(near.id, true).catch(() => undefined);
         }
         sfx('report');
+        say('Buraco confirmado para a comunidade.');
         setToast('Solavanco detectado: buraco confirmado automaticamente para a comunidade.');
         return;
       }
@@ -394,6 +410,7 @@ function Shell({ user }: { user: AppUser }) {
         });
         setCommunity((c) => [...c, saved]);
         sfx('report');
+        say('Buraco detectado. Aviso enviado para a comunidade.');
         setToast(`Solavanco de ${g} g detectado: aviso de buraco criado sozinho.`);
       } catch (e) {
         setToast(`Não foi possível enviar: ${(e as Error).message}`);
@@ -463,6 +480,7 @@ function Shell({ user }: { user: AppUser }) {
     <div className="relative h-full overflow-hidden">
       {tourOpen && <Tour steps={TOUR} onClose={() => { setTourOpen(false); setTourSeen(true); }} />}
       <Map3D
+        lite={lite}
         origin={origin}
         destination={destination}
         routes={mapRoutes}
@@ -503,12 +521,30 @@ function Shell({ user }: { user: AppUser }) {
         <div className="relative">
           <button type="button" onClick={() => setPaletteOpen(!paletteOpen)} className="rounded-xl p-2 text-mist hover:bg-white/10 hover:text-white" aria-expanded={paletteOpen} aria-label="Trocar paleta de cores" title="Paleta de cores"><Palette className="h-5 w-5" /></button>
           {paletteOpen && (
-            <div className="glass rise absolute right-0 top-12 z-40 w-44 rounded-2xl p-2" role="menu">
+            <div className="glass rise absolute right-0 top-12 z-40 w-56 rounded-2xl p-2" role="menu">
               {THEMES.map((t) => (
                 <button key={t.id} type="button" role="menuitemradio" aria-checked={theme === t.id} onClick={() => { setTheme(t.id); setPaletteOpen(false); }}
                   className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm hover:bg-white/10 ${theme === t.id ? 'text-eco' : 'text-white'}`}>
                   <span className="h-5 w-5 rounded-full border border-white/20" style={{ background: `linear-gradient(135deg, ${t.swatch[0]} 50%, ${t.swatch[1]} 50%)` }} />
                   {t.name}
+                </button>
+              ))}
+              <div className="my-1.5 h-px bg-white/10" />
+              <button type="button" role="menuitemcheckbox" aria-checked={lite} onClick={() => setLite(!lite)}
+                className="flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-left text-sm text-white hover:bg-white/10">
+                <span>Modo leve<span className="block text-[11px] text-mist">sem prédios 3D, mais rápido</span></span>
+                <span className={`relative h-5 w-9 shrink-0 rounded-full transition ${lite ? 'bg-eco' : 'bg-white/15'}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${lite ? 'left-[18px]' : 'left-0.5'}`} />
+                </span>
+              </button>
+              <div className="my-1.5 h-px bg-white/10" />
+              <div className="px-2.5 pb-1 pt-0.5 text-[11px] uppercase tracking-wider text-mist">Voz dos avisos</div>
+              {([['dora', 'Dora', 'voz de IA feminina'], ['alex', 'Alex', 'voz de IA masculina'], ['device', 'Do aparelho', 'voz do sistema']] as const).map(([id, name, hint]) => (
+                <button key={id} type="button" role="menuitemradio" aria-checked={voice === id}
+                  onClick={() => { unlockAudio(); setVoice(id); setVoiceChoice(id); setVoiceEnabled(true); speak('Olá! Esta é a voz dos avisos do EcoTire.'); setVoiceEnabled(soundMode === 'voice'); }}
+                  className={`flex w-full items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-sm hover:bg-white/10 ${voice === id ? 'text-eco' : 'text-white'}`}>
+                  <span>{name}<span className="block text-[11px] text-mist">{hint}</span></span>
+                  {voice === id && <Volume2 className="h-4 w-4" />}
                 </button>
               ))}
             </div>
@@ -582,6 +618,7 @@ function Shell({ user }: { user: AppUser }) {
       ) : (
         <main className="glass scroll-thin bg-ink/60 absolute inset-x-2 bottom-2 top-[4.5rem] z-10 overflow-y-auto rounded-3xl p-5 lg:inset-x-[5%] lg:bottom-4 lg:top-[5.5rem] lg:p-7">
           <div key={tab} className="view-in">
+          <Suspense fallback={<div className="flex h-40 items-center justify-center text-mist"><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Carregando…</div>}>
           {tab === 'dash' ? (
             <DashboardPanel
               user={user}
@@ -618,6 +655,7 @@ function Shell({ user }: { user: AppUser }) {
               onDeleteZone={(id) => void db.deleteRiskZone(id).then(() => setCommunity((c) => c.filter((z) => z.id !== id))).catch(() => undefined)}
             />
           )}
+          </Suspense>
           </div>
         </main>
       )}

@@ -17,7 +17,7 @@ const TONES: Record<AirTone, [number, number, number]> = {
   high: [251, 113, 133],
 };
 const TONE_IDX: AirTone[] = ['dust', 'low', 'moderate', 'high'];
-const MAX = 1800;
+const FULL_MAX = 1800;
 
 function sprite(rgb: [number, number, number]): HTMLCanvasElement {
   const c = document.createElement('canvas');
@@ -32,7 +32,7 @@ function sprite(rgb: [number, number, number]): HTMLCanvasElement {
   return c;
 }
 
-export function AirOverlay({ map, emitters }: { map: MlMap | null; emitters: AirEmitter[] }) {
+export function AirOverlay({ map, emitters, lite = false }: { map: MlMap | null; emitters: AirEmitter[]; lite?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const src = useRef(emitters);
   src.current = emitters;
@@ -43,6 +43,8 @@ export function AirOverlay({ map, emitters }: { map: MlMap | null; emitters: Air
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // modo leve: menos partículas e canvas em resolução 1x
+    const MAX = lite ? 450 : FULL_MAX;
     const sprites = TONE_IDX.map((t) => sprite(TONES[t]));
 
     const lng = new Float64Array(MAX);
@@ -60,7 +62,7 @@ export function AirOverlay({ map, emitters }: { map: MlMap | null; emitters: Air
 
     let dpr = 1;
     const resize = () => {
-      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      dpr = lite ? 1 : Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.max(1, canvas.clientWidth * dpr);
       canvas.height = Math.max(1, canvas.clientHeight * dpr);
     };
@@ -145,7 +147,7 @@ export function AirOverlay({ map, emitters }: { map: MlMap | null; emitters: Air
       cancelAnimationFrame(raf);
       ro.disconnect();
     };
-  }, [map]);
+  }, [map, lite]);
 
   return <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true" />;
 }

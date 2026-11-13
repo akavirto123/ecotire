@@ -47,6 +47,7 @@ let voiceEnabled = true;
 export function setVoiceEnabled(v: boolean) {
   voiceEnabled = v;
   if (!v && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+  if (!v) player?.pause();
 }
 
 /** Prefere as vozes neurais (Edge "Natural"/"Online", Google) e evita português de Portugal. */
@@ -74,14 +75,65 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
   });
 }
 
-export function speak(text: string) {
+/** Vozes neurais (IA) geradas com o modelo aberto Kokoro e gravadas em arquivos: soam iguais em qualquer aparelho. */
+export type VoiceChoice = 'dora' | 'alex' | 'device';
+let voiceChoice: VoiceChoice = 'dora';
+export function setVoiceChoice(v: VoiceChoice) {
+  voiceChoice = v;
+}
+
+/** FNV-1a 32 bits: mesma chave usada ao gerar os arquivos de voz. */
+export function voiceKey(text: string): string {
+  let h = 0x811c9dc5;
+  for (const b of new TextEncoder().encode(text)) {
+    h ^= b;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+const base = (import.meta.env.BASE_URL ?? './').replace(/\/?$/, '/');
+type VoiceIndex = { texts: Record<string, string>; clips: Record<string, Record<string, [number, number]>> };
+let index: Promise<VoiceIndex | null> | null = null;
+function voiceIndex() {
+  index ??= fetch(`${base}voice/index.json`)
+    .then((r) => (r.ok ? (r.json() as Promise<VoiceIndex>) : null))
+    .catch(() => null);
+  return index;
+}
+// cada voz é um único arquivo com todas as falas (2 downloads em vez de 170); toca só o trecho da frase
+const sprites = new Map<string, Promise<AudioBuffer | null>>();
+function sprite(voice: string): Promise<AudioBuffer | null> {
+  let p = sprites.get(voice);
+  if (!p) {
+    p = fetch(`${base}voice/${voice}.mp3`)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error('sem áudio'))))
+      .then((buf) => {
+        unlockAudio();
+        return ctx ? ctx.decodeAudioData(buf) : null;
+      })
+      .catch(() => {
+        sprites.delete(voice);
+        return null;
+      });
+    sprites.set(voice, p);
+  }
+  return p;
+}
+/** Baixa a voz escolhida antes do primeiro aviso (chamado ao iniciar a viagem). */
+export function preloadVoice() {
+  if (voiceChoice !== 'device') void sprite(voiceChoice);
+}
+let current: AudioBufferSourceNode | null = null;
+const player = { pause: () => { try { current?.stop(); } catch { /* já parou */ } current = null; } };
+
+function speakDevice(text: string) {
   try {
-    if (!voiceEnabled || !('speechSynthesis' in window)) return;
+    if (!('speechSynthesis' in window)) return;
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'pt-BR';
     const voice = pickVoice();
     if (voice) u.voice = voice;
-    // vozes neurais já soam naturais na velocidade normal; as antigas ficam melhores um pouco mais lentas
     u.rate = voice && /natural|neural|online|google/i.test(voice.name) ? 1.0 : 0.95;
     u.pitch = 1;
     u.volume = 1;
@@ -92,12 +144,33 @@ export function speak(text: string) {
   }
 }
 
+export function speak(text: string) {
+  if (!voiceEnabled) return;
+  if (voiceChoice === 'device') return speakDevice(text);
+  const voice = voiceChoice;
+  const k = voiceKey(text);
+  void voiceIndex().then(async (idx) => {
+    const clip = idx?.clips[voice]?.[k];
+    if (!clip) return speakDevice(text); // frase fora da lista gravada: usa a voz do aparelho
+    const buf = await sprite(voice);
+    if (!buf || !ctx) return speakDevice(text);
+    if (ctx.state === 'suspended') await ctx.resume().catch(() => undefined);
+    player.pause();
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start(0, clip[0], clip[1]);
+    current = src;
+  });
+}
+
 export function alertMessage(a: RiskAlert): string {
   const meta = RISK_META[a.zone.type];
   const rush = a.zone.type === 'school' && isSchoolRush() ? ' Horário de entrada e saída de alunos.' : '';
   if (a.stage === 'inside') return `Você está em ${meta.voice}. Até ${a.advisedKmh}, sem frear forte.${rush}`;
-  const dist = Math.round(a.distanceM / 50) * 50 || 50;
-  return `${meta.voice} em ${dist} metros. Reduza para ${a.advisedKmh}.${rush}`;
+  const dist = Math.min(600, Math.round(a.distanceM / 50) * 50 || 50);
+  const lead = meta.voice.charAt(0).toUpperCase() + meta.voice.slice(1);
+  return `${lead} em ${dist} metros. Reduza para ${a.advisedKmh}.${rush}`;
 }
 
 /** Aviso sonoro + voz + vibração para um alerta de zona de risco. */

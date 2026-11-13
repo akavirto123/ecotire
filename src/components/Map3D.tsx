@@ -14,6 +14,8 @@ export type MapRoute = { coords: Pt[]; selected: boolean; cleanest: boolean };
 export type MapColumn = Pt & { mgPerKm: number; level: 'low' | 'moderate' | 'high' };
 
 type Props = {
+  /** modo leve: sem prédios 3D, menos partículas, menor resolução */
+  lite?: boolean;
   origin: Pt | null;
   destination: Pt | null;
   routes: MapRoute[];
@@ -103,6 +105,8 @@ export function Map3D(props: Props) {
           // só o estado de São Paulo, com folga: deixa o mapa leve e focado
           maxBounds: [[-54.2, -26.3], [-43.2, -18.9]],
           minZoom: 5.5,
+          pixelRatio: props.lite ? Math.min(window.devicePixelRatio || 1, 1.25) : undefined,
+          fadeDuration: props.lite ? 0 : undefined,
           attributionControl: { compact: true },
         });
       } catch {
@@ -308,6 +312,13 @@ export function Map3D(props: Props) {
 
   const map = ready ? mapRef.current : null;
 
+  // prédios 3D são a parte mais pesada do mapa: somem no modo leve
+  useEffect(() => {
+    if (!map) return;
+    if (map.getLayer('eco-buildings')) map.setLayoutProperty('eco-buildings', 'visibility', props.lite ? 'none' : 'visible');
+    map.setPixelRatio(props.lite ? Math.min(window.devicePixelRatio || 1, 1.25) : window.devicePixelRatio || 1);
+  }, [map, props.lite]);
+
   // zonas de risco (cilindros 3D + pontos clicáveis)
   const activeKey = props.activeZoneIds.join(',');
   useEffect(() => {
@@ -465,7 +476,7 @@ export function Map3D(props: Props) {
           Este navegador não conseguiu iniciar o mapa 3D (WebGL desativado). O restante do EcoTire continua funcionando.
         </div>
       )}
-      <AirOverlay map={map} emitters={air} />
+      <AirOverlay map={map} emitters={air} lite={props.lite} />
       {/* vinheta para dar leitura aos painéis */}
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_60%,rgba(14,15,18,0.8)_100%)]" />
     </div>

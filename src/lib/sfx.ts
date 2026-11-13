@@ -39,32 +39,29 @@ function note(freq: number, at: number, dur: number, gain: number, type: Oscilla
 export type Sfx = 'tap' | 'toggle' | 'start' | 'stop' | 'level' | 'report';
 
 export function sfx(kind: Sfx) {
+  // sons suaves e raros: nada de clique em cada botão, só nos momentos que importam
   switch (kind) {
-    case 'tap': // toque seco e baixo, como tecla de painel
-      note(520, 0, 0.05, 0.035, 'triangle', 380);
-      break;
+    case 'tap':
     case 'toggle':
-      note(660, 0, 0.06, 0.04, 'triangle');
+      return;
+    case 'start': // sino suave subindo
+      note(523, 0, 0.35, 0.03);
+      note(784, 0.09, 0.45, 0.025);
       break;
-    case 'start': // duas notas subindo: "vamos"
-      note(392, 0, 0.14, 0.07);
-      note(587, 0.11, 0.22, 0.07);
+    case 'stop': // sino suave descendo
+      note(784, 0, 0.35, 0.025);
+      note(523, 0.1, 0.5, 0.03);
       break;
-    case 'stop': // duas notas descendo: "chegamos"
-      note(587, 0, 0.14, 0.07);
-      note(392, 0.11, 0.26, 0.07);
+    case 'report': // "plim" único
+      note(880, 0, 0.3, 0.025);
       break;
-    case 'report':
-      note(740, 0, 0.09, 0.06, 'triangle');
-      note(740, 0.12, 0.09, 0.06, 'triangle');
-      break;
-    case 'level': // arpejo curto de conquista
-      [523, 659, 784, 1047].forEach((f, i) => note(f, i * 0.09, 0.28, 0.06));
+    case 'level': // acorde aberto, curto e baixo
+      [523, 659, 784].forEach((f, i) => note(f, i * 0.07, 0.6, 0.022));
       break;
   }
-  if (kind !== 'tap' && kind !== 'toggle' && !muted) {
+  if (!muted) {
     try {
-      navigator.vibrate?.(kind === 'level' ? [30, 40, 30, 40, 60] : 25);
+      navigator.vibrate?.(kind === 'level' ? [30, 40, 30] : 20);
     } catch {
       /* sem vibração */
     }

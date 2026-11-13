@@ -46,12 +46,107 @@ export function bodyTypeOf(v: Vehicle): BodyType {
 }
 async function loadCar(body: BodyType): Promise<{ gltf: GLTF; custom: boolean }> {
   try {
-    const head = await fetch(`${import.meta.env.BASE_URL}models/${body}.glb`, { method: 'HEAD' });
-    if (head.ok && !(head.headers.get('content-type') ?? '').includes('text/html')) return { gltf: await loadGlb(`${import.meta.env.BASE_URL}models/${body}.glb`), custom: true };
+    return { gltf: await loadGlb(`${import.meta.env.BASE_URL}models/${body}.glb`), custom: true };
   } catch {
-    /* sem modelo próprio para este tipo */
+    return { gltf: await loadGlb(DEFAULT_MODEL), custom: false }; // sem modelo para este tipo
   }
-  return { gltf: await loadGlb(DEFAULT_MODEL), custom: false };
+}
+
+/**
+ * Os modelos por tipo (Kenney Car Kit, CC0) pintam tudo com uma única textura-paleta.
+ * Descobre a cor da lataria (o texel mais usado pela malha "body") e troca só essa cor pela pintura escolhida.
+ */
+function repaint(car: THREE.Object3D, paint: THREE.Color) {
+  let body: THREE.Mesh | null = null;
+  car.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh && /body/i.test(o.name) && !body) body = o as THREE.Mesh;
+  });
+  const mesh = body as THREE.Mesh | null;
+  const mat = mesh?.material as THREE.MeshStandardMaterial | undefined;
+  const img = mat?.map?.image as (CanvasImageSource & { width: number; height: number }) | undefined;
+  const uv = mesh?.geometry.getAttribute('uv');
+  if (!mesh || !mat || !img || !uv) return;
+  const cv = document.createElement('canvas');
+  cv.width = img.width;
+  cv.height = img.height;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return;
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, cv.width, cv.height);
+  const px = data.data;
+  const flip = mat.map!.flipY;
+  const votes = new Map<number, number>();
+  const pos = mesh.geometry.getAttribute('position');
+  const idx = mesh.geometry.getIndex();
+  const tri = idx ? idx.count / 3 : pos.count / 3;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const vi = (k: number) => (idx ? idx.getX(k) : k);
+  for (let t = 0; t < tri; t++) {
+    const i0 = vi(t * 3);
+    const i1 = vi(t * 3 + 1);
+    const i2 = vi(t * 3 + 2);
+    a.fromBufferAttribute(pos, i0);
+    b.fromBufferAttribute(pos, i1);
+    c.fromBufferAttribute(pos, i2);
+    const area = b.sub(a).cross(c.sub(a)).length() / 2;
+    const u = (uv.getX(i0) + uv.getX(i1) + uv.getX(i2)) / 3;
+    const v = (uv.getY(i0) + uv.getY(i1) + uv.getY(i2)) / 3;
+    const x = Math.min(cv.width - 1, Math.max(0, Math.floor(u * cv.width)));
+    const y = Math.min(cv.height - 1, Math.max(0, Math.floor((flip ? 1 - v : v) * cv.height)));
+    const o = (y * cv.width + x) * 4;
+    const rgb = (px[o] << 16) | (px[o + 1] << 8) | px[o + 2];
+    // a lataria é colorida: ignora cinzas (vidro, pneu, para-choque)
+    const sat = Math.max(px[o], px[o + 1], px[o + 2]) - Math.min(px[o], px[o + 1], px[o + 2]);
+    if (sat < 40) continue;
+    votes.set(rgb, (votes.get(rgb) ?? 0) + area);
+  }
+  const top = [...votes.entries()].sort((x, y) => y[1] - x[1])[0]?.[0];
+  if (top == null) return;
+  // troca por matiz (não por cor exata): a paleta tem vários tons da mesma cor para luz e sombra
+  const hsl = { h: 0, s: 0, l: 0 };
+  new THREE.Color().setRGB(((top >> 16) & 255) / 255, ((top >> 8) & 255) / 255, (top & 255) / 255, THREE.SRGBColorSpace).getHSL(hsl, THREE.SRGBColorSpace);
+  const bodyHue = hsl.h;
+  const bodyL = hsl.l;
+  const want = { h: 0, s: 0, l: 0 };
+  paint.getHSL(want, THREE.SRGBColorSpace);
+  const tmp = new THREE.Color();
+  const cur = { h: 0, s: 0, l: 0 };
+  const rgbOut = { r: 0, g: 0, b: 0 };
+  for (let o = 0; o < px.length; o += 4) {
+    tmp.setRGB(px[o] / 255, px[o + 1] / 255, px[o + 2] / 255, THREE.SRGBColorSpace).getHSL(cur, THREE.SRGBColorSpace);
+    const dh = Math.min(Math.abs(cur.h - bodyHue), 1 - Math.abs(cur.h - bodyHue));
+    if (cur.s < 0.2 || dh > 0.045) continue;
+    // mantém a variação de luz da paleta em torno da cor escolhida
+    const l = Math.min(0.84, Math.max(0.06, want.l + (cur.l - bodyL) * 0.8));
+    tmp.setHSL(want.h, Math.max(want.s, 0.35) * (want.s < 0.08 ? 0 : 1), l, THREE.SRGBColorSpace);
+    tmp.getRGB(rgbOut, THREE.SRGBColorSpace);
+    px[o] = rgbOut.r * 255;
+    px[o + 1] = rgbOut.g * 255;
+    px[o + 2] = rgbOut.b * 255;
+  }
+  ctx.putImageData(data, 0, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.flipY = flip;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = mat.map!.magFilter;
+  tex.minFilter = mat.map!.minFilter;
+  tex.generateMipmaps = mat.map!.generateMipmaps;
+  car.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    for (const mm of Array.isArray(m.material) ? m.material : [m.material]) {
+      const sm = mm as THREE.MeshStandardMaterial;
+      if (sm.map && sm.map.image === img) {
+        sm.map = tex;
+        sm.roughness = 0.38;
+        sm.metalness = 0.1;
+        sm.envMapIntensity = 0.45; // a paleta já é clara: menos reflexo do estúdio para não lavar as cores
+        sm.needsUpdate = true;
+      }
+    }
+  });
 }
 
 /**
@@ -145,11 +240,12 @@ export function Car3D({ paint, body, theme, className }: { paint: string | null;
           mesh.material = Array.isArray(mesh.material) ? mats : mats[0];
         });
         if (custom) {
-          // modelo colocado por vocês: centraliza, apoia no chão e ajusta para ~4,4 m de comprimento
+          repaint(car, color);
+          // modelo por tipo: centraliza, apoia no chão e ajusta para ~4,4 m de comprimento
           car.updateMatrixWorld(true);
           const box = new THREE.Box3().setFromObject(car, true);
           const size = box.getSize(new THREE.Vector3());
-          const k = 4.4 / Math.max(size.x, size.z, 0.001);
+          const k = 3.9 / Math.max(size.x, size.z, 0.001);
           const c = box.getCenter(new THREE.Vector3());
           car.scale.setScalar(k);
           car.position.set(-c.x * k, -box.min.y * k, -c.z * k);
@@ -159,7 +255,7 @@ export function Car3D({ paint, body, theme, className }: { paint: string | null;
         }
         const wrap = new THREE.Group();
         wrap.add(car);
-        wrap.rotation.y = -Math.PI / 2;
+        wrap.rotation.y = custom ? Math.PI / 2 : -Math.PI / 2; // modelos por tipo apontam para +z
         pivot.add(wrap);
         setStatus('ready');
       })

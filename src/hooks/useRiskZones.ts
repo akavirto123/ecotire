@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { haversine, type Pt } from '@/lib/geo';
-import { boundsOf, fetchRoadIssuesInBounds, fetchSensitiveInBounds, fetchZonesAround, type BoundingBox } from '@/lib/overpass';
+import { boundsOf, fetchRoadIssuesInBounds, type BoundingBox } from '@/lib/overpass';
 import { mergeZones, type RiskZone } from '@/lib/risk';
-import { fetchTileChargers, fetchTileZones, tilesFor, type Charger } from '@/lib/tilezones';
+import { fetchTileChargers, fetchTileZones, streamTiles, tilesFor, type Charger } from '@/lib/tilezones';
 
 /**
  * Reúne as zonas de risco: reportadas pela comunidade (banco) + detectadas automaticamente
@@ -34,16 +34,43 @@ export function useRiskZones(community: RiskZone[], routeCoords: Pt[] | undefine
     // fonte principal: os blocos do próprio mapa (rápidos). O Overpass complementa em segundo plano, sem travar a tela.
     const add = (z: RiskZone[]) => !ctrl.signal.aborted && setRouteZones((prev) => mergeZones(prev, z));
     const sampled = routeCoords.filter((_, i) => i % 4 === 0 || i === routeCoords.length - 1);
-    const keys = tilesFor(sampled, 300);
-    void fetchTileChargers(keys).then((c) => !ctrl.signal.aborted && setRouteChargers(c)).catch(() => undefined);
-    fetchTileZones(keys)
-      .then(add)
+    // blocos na ordem da rota (do começo para o fim): o trecho de agora aparece primeiro
+    const keys = tilesFor(sampled, 250);
+    const charged: Charger[] = [];
+    // junta as atualizações em lotes para não redesenhar o mapa a cada bloco
+    let pending: RiskZone[] = [];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const flush = () => {
+      timer = undefined;
+      if (ctrl.signal.aborted) return;
+      add(pending);
+      pending = [];
+      setRouteChargers([...charged]);
+    };
+    streamTiles(
+      keys,
+      (t) => {
+        pending.push(...t.zones);
+        charged.push(...t.chargers.filter((c) => !charged.some((o) => o.id === c.id)));
+        timer ??= setTimeout(flush, 250);
+      },
+      ctrl.signal,
+    )
+      .then(() => {
+        clearTimeout(timer);
+        flush();
+      })
       .catch(() => !ctrl.signal.aborted && setError(true))
       .finally(() => !ctrl.signal.aborted && setLoading(false));
-    const b = boundsOf(routeCoords, 300);
-    void fetchSensitiveInBounds(b, ctrl.signal).then(add).catch(() => undefined);
-    void fetchRoadIssuesInBounds(b, ctrl.signal).then(add).catch(() => undefined);
-    return () => ctrl.abort();
+    // Overpass (servidor público, lento): só para rotas curtas e depois que o principal já apareceu.
+    // Escolas, hospitais e terra já vêm dos blocos; daqui vêm buracos e lombadas marcados no OSM.
+    const b = boundsOf(routeCoords, 200);
+    const small = haversine({ lat: b.south, lng: b.west }, { lat: b.north, lng: b.east }) < 12000;
+    const later = small ? setTimeout(() => void fetchRoadIssuesInBounds(b, ctrl.signal).then(add).catch(() => undefined), 2500) : undefined;
+    return () => {
+      clearTimeout(later);
+      ctrl.abort();
+    };
   }, [routeCoords]);
 
   // ao redor do veículo: refaz a busca a cada ~500 m percorridos
@@ -55,7 +82,6 @@ export function useRiskZones(community: RiskZone[], routeCoords: Pt[] | undefine
     if (lastFetch.current && haversine(lastFetch.current, { lat, lng }) < 500) return;
     fetching.current = true;
     lastFetch.current = { lat, lng };
-    void fetchZonesAround({ lat, lng }, 1200).then((z) => setNearZones((prev) => mergeZones(prev, z).slice(-600))).catch(() => undefined);
     fetchTileZones(tilesFor([{ lat, lng }], 1200))
       .then((z) => setNearZones((prev) => mergeZones(prev, z).slice(-600)))
       .catch(() => {
@@ -76,7 +102,7 @@ export function useRiskZones(community: RiskZone[], routeCoords: Pt[] | undefine
       const [a, b2] = tilesFor(corners, 0).reduce<[number[], number[]]>((acc, k) => { const [x, y] = k.split('/').map(Number); acc[0].push(x); acc[1].push(y); return acc; }, [[], []]);
       const keys: string[] = [];
       for (let x = Math.min(...a); x <= Math.max(...a); x++) for (let y = Math.min(...b2); y <= Math.max(...b2); y++) keys.push(`${x}/${y}`);
-      if (keys.length <= 30) {
+      if (keys.length <= 16) {
         fetchTileZones(keys).then((z) => !ctrl.signal.aborted && setMapZones(z)).catch(() => undefined);
         fetchTileChargers(keys).then((c) => !ctrl.signal.aborted && setMapChargers(c)).catch(() => undefined);
       }

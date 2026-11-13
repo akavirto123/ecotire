@@ -94,13 +94,31 @@ export function zonesAlongRoute(coords: Pt[], zones: RiskZone[], marginM = 60): 
 
 /** Junta listas de zonas, removendo duplicadas (mesmo id, ou mesmo tipo a menos de 60 m). */
 export function mergeZones(...lists: RiskZone[][]): RiskZone[] {
+  // grade espacial de ~60 m: compara cada zona só com as vizinhas (antes era todas contra todas)
   const out: RiskZone[] = [];
   const seen = new Set<string>();
-  for (const z of lists.flat()) {
-    if (seen.has(z.id)) continue;
-    if (out.some((o) => o.type === z.type && haversine(o, z) < 60)) continue;
-    seen.add(z.id);
-    out.push(z);
+  const grid = new Map<string, RiskZone[]>();
+  const CELL = 0.0006; // ≈ 66 m em latitude
+  const cellOf = (z: Pt) => [Math.floor(z.lat / CELL), Math.floor(z.lng / CELL)] as const;
+  for (const list of lists) {
+    for (const z of list) {
+      if (seen.has(z.id)) continue;
+      const [cy, cx] = cellOf(z);
+      let dup = false;
+      for (let dy = -1; dy <= 1 && !dup; dy++) {
+        for (let dx = -1; dx <= 1 && !dup; dx++) {
+          const bucket = grid.get(`${cy + dy}:${cx + dx}`);
+          if (bucket?.some((o) => o.type === z.type && haversine(o, z) < 60)) dup = true;
+        }
+      }
+      if (dup) continue;
+      seen.add(z.id);
+      out.push(z);
+      const key = `${cy}:${cx}`;
+      const b = grid.get(key);
+      if (b) b.push(z);
+      else grid.set(key, [z]);
+    }
   }
   return out;
 }

@@ -552,7 +552,7 @@ export function GaragePanel({ vehicles, vehicleId, onSelect, onAdd, onDelete, my
               <Stat label="Peso" value={`${current.curbWeightKg} kg`} />
               <Stat label="PM2.5 base" value={`${basePm25PerKm(grossWeightKg(current, { passengers: 1, trunkFillPct: 0 })).toFixed(2)} mg/km`} color="#fb7185" />
             </div>
-            <p className="mt-2 text-[11px] text-mist">O modelo 3D é um carro-conceito ilustrativo: a cor muda com o veículo, o formato não. Cada 100 kg a mais aumentam em cerca de {((100 / 1400) * 10.7 * 0.42).toFixed(2)} mg/km o PM2.5 estimado.</p>
+            <p className="mt-2 text-[11px] text-mist">Cada tipo tem o seu modelo 3D (hatch, sedã, SUV ou picape), na cor do veículo. Modelos: Kenney Car Kit (CC0). Cada 100 kg a mais aumentam em cerca de {((100 / 1400) * 10.7 * 0.42).toFixed(2)} mg/km o PM2.5 estimado.</p>
           </div>
         </div>
       )}

@@ -34,7 +34,10 @@ class Reader {
       if (field(tag >>> 3, wire)) continue;
       if (wire === 0) this.varint();
       else if (wire === 1) this.pos += 8;
-      else if (wire === 2) this.pos += this.varint();
+      else if (wire === 2) {
+        const len = this.varint(); // ler o tamanho antes: `pos += varint()` perderia os bytes do próprio tamanho
+        this.pos += len;
+      }
       else if (wire === 5) this.pos += 4;
       else throw new Error('protobuf inválido');
     }
@@ -67,17 +70,30 @@ export type TileLayers = Record<string, { extent: number; features: TileFeature[
 const zigzag = (n: number) => (n % 2 ? -(n + 1) / 2 : n / 2);
 
 /** Decodifica as camadas pedidas de um bloco vetorial. */
-export function decodeTile(buf: Uint8Array, wanted: string[]): TileLayers {
+export type FeatureFilter = (layer: string, props: TileFeature['props'], type: number) => boolean;
+export function decodeTile(buf: Uint8Array, wanted: string[], keep?: FeatureFilter): TileLayers {
   const out: TileLayers = {};
   const top = new Reader(buf);
   top.fields((num, wire) => {
     if (num !== 3 || wire !== 2) return false;
     const layer = top.sub();
+    // primeiro só o nome (pular campos é barato): camadas pesadas como prédios nem são decodificadas
+    const start = layer.pos;
+    let layerName = '';
+    layer.fields((n, w) => {
+      if (n === 1 && w === 2) {
+        layerName = layer.string();
+        return true;
+      }
+      return false;
+    });
+    if (!wanted.includes(layerName)) return true;
+    layer.pos = start;
     let name = '';
     let extent = 4096;
     const keys: string[] = [];
     const values: (string | number | boolean)[] = [];
-    const raw: { type: number; tags: number[]; geom: number[] }[] = [];
+    const raw: { type: number; tags: number[]; geomAt: number; geomEnd: number }[] = [];
     layer.fields((n, w) => {
       if (n === 1 && w === 2) name = layer.string();
       else if (n === 5 && w === 0) extent = layer.varint();
@@ -102,12 +118,17 @@ export function decodeTile(buf: Uint8Array, wanted: string[]): TileLayers {
         values.push(val);
       } else if (n === 2 && w === 2) {
         const f = layer.sub();
-        const feat = { type: 0, tags: [] as number[], geom: [] as number[] };
+        const feat = { type: 0, tags: [] as number[], geomAt: -1, geomEnd: -1 };
         f.fields((fn, fw) => {
           if (fn === 3 && fw === 0) feat.type = f.varint();
           else if (fn === 2 && fw === 2) feat.tags = f.packed();
-          else if (fn === 4 && fw === 2) feat.geom = f.packed();
-          else return false;
+          else if (fn === 4 && fw === 2) {
+            // geometria só é lida depois, e só para as feições que interessam
+            const len = f.varint();
+            feat.geomAt = f.pos;
+            feat.geomEnd = f.pos + len;
+            f.pos += len;
+          } else return false;
           return true;
         });
         raw.push(feat);
@@ -117,24 +138,29 @@ export function decodeTile(buf: Uint8Array, wanted: string[]): TileLayers {
     if (!wanted.includes(name)) return true;
     out[name] = {
       extent,
-      features: raw.map((f) => {
+      features: raw.flatMap((f) => {
         const props: TileFeature['props'] = {};
         for (let i = 0; i + 1 < f.tags.length; i += 2) props[keys[f.tags[i]]] = values[f.tags[i + 1]];
+        if (keep && !keep(name, props, f.type)) return [];
+        const g = new Reader(buf, f.geomEnd);
+        g.pos = f.geomAt;
+        const geom: number[] = [];
+        if (f.geomAt >= 0) while (g.pos < f.geomEnd) geom.push(g.varint());
         const points: [number, number][] = [];
         let x = 0;
         let y = 0;
-        for (let i = 0; i < f.geom.length; ) {
-          const cmd = f.geom[i] & 7;
-          const count = f.geom[i] >>> 3;
+        for (let i = 0; i < geom.length; ) {
+          const cmd = geom[i] & 7;
+          const count = geom[i] >>> 3;
           i++;
           if (cmd === 7) continue;
           for (let k = 0; k < count; k++) {
-            x += zigzag(f.geom[i++]);
-            y += zigzag(f.geom[i++]);
+            x += zigzag(geom[i++]);
+            y += zigzag(geom[i++]);
             points.push([x, y]);
           }
         }
-        return { type: f.type, props, points };
+        return [{ type: f.type, props, points }];
       }),
     };
     return true;
@@ -212,7 +238,13 @@ export function chargersFromTile(tx: number, ty: number, layers: TileLayers): Ch
   return out;
 }
 
-type TileData = { zones: RiskZone[]; chargers: Charger[] };
+/** Só as feições que viram zona ou carregador: o resto do bloco nem tem a geometria lida. */
+export const keepFeature: FeatureFilter = (layer, p, type) =>
+  layer === 'poi'
+    ? p.class === 'school' || p.class === 'hospital' || p.subclass === 'charging_station'
+    : type === 2 && p.surface === 'unpaved' && ROAD_CLASSES.has(String(p.class));
+
+export type TileData = { zones: RiskZone[]; chargers: Charger[] };
 let template: Promise<string> | null = null;
 const cache = new Map<string, Promise<TileData>>();
 
@@ -224,7 +256,7 @@ function loadTile(key: string): Promise<TileData> {
       const [x, y] = key.split('/').map(Number);
       const res = await fetch((await template).replace('{z}', String(Z)).replace('{x}', String(x)).replace('{y}', String(y)));
       if (!res.ok) throw new Error(`bloco ${res.status}`);
-      const layers = decodeTile(new Uint8Array(await res.arrayBuffer()), ['poi', 'transportation']);
+      const layers = decodeTile(new Uint8Array(await res.arrayBuffer()), ['poi', 'transportation'], keepFeature);
       return { zones: zonesFromTile(x, y, layers), chargers: chargersFromTile(x, y, layers) };
     })();
     cache.set(key, p);
@@ -236,8 +268,23 @@ function loadTile(key: string): Promise<TileData> {
   return p;
 }
 
+/** No máximo 4 downloads ao mesmo tempo: o mapa também está baixando blocos e não pode ficar na fila. */
+const MAX_PARALLEL = 4;
+let running = 0;
+const queue: (() => void)[] = [];
+async function withSlot<T>(job: () => Promise<T>): Promise<T> {
+  if (running >= MAX_PARALLEL) await new Promise<void>((r) => queue.push(r));
+  running++;
+  try {
+    return await job();
+  } finally {
+    running--;
+    queue.shift()?.();
+  }
+}
+
 async function fetchTiles(keys: string[], limit: number): Promise<TileData[]> {
-  const results = await Promise.allSettled(keys.slice(0, limit).map(loadTile));
+  const results = await Promise.allSettled(keys.slice(0, limit).map((k) => (cache.has(k) ? loadTile(k) : withSlot(() => loadTile(k)))));
   if (results.length && results.every((r) => r.status === 'rejected')) throw new Error('mapa indisponível');
   return results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
 }
@@ -251,4 +298,22 @@ export async function fetchTileZones(keys: string[], limit = 80): Promise<RiskZo
 export async function fetchTileChargers(keys: string[], limit = 80): Promise<Charger[]> {
   const seen = new Set<string>();
   return (await fetchTiles(keys, limit)).flatMap((t) => t.chargers).filter((c) => !seen.has(c.id) && seen.add(c.id));
+}
+
+/**
+ * Entrega bloco por bloco, na ordem dada (o chamador põe os mais próximos primeiro),
+ * para as zonas irem aparecendo sem esperar a rota inteira.
+ */
+export async function streamTiles(keys: string[], onTile: (t: TileData) => void, signal?: AbortSignal, limit = 80): Promise<number> {
+  let ok = 0;
+  await Promise.allSettled(
+    keys.slice(0, limit).map((k) =>
+      (cache.has(k) ? loadTile(k) : withSlot(() => (signal?.aborted ? Promise.reject(new Error('cancelado')) : loadTile(k)))).then((t) => {
+        ok++;
+        if (!signal?.aborted) onTile(t);
+      }),
+    ),
+  );
+  if (!ok && keys.length && !signal?.aborted) throw new Error('mapa indisponível');
+  return ok;
 }
