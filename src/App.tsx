@@ -11,6 +11,7 @@ import { useAuth, type AppUser } from '@/hooks/useAuth';
 import { useLiveTrip, type TripSummary } from '@/hooks/useLiveTrip';
 import { useRiskZones } from '@/hooks/useRiskZones';
 import { preloadVoice, setVoiceChoice, setVoiceEnabled, speak, unlockAudio, type VoiceChoice } from '@/lib/alerts';
+import { simulateHeat } from '@/lib/heatsim';
 import { requestMotionPermission, motionSupported, startBumpSensor } from '@/lib/bumps';
 import { setSfxMuted, sfx } from '@/lib/sfx';
 import { trainDriverModel } from '@/lib/ai';
@@ -115,6 +116,8 @@ function Shell({ user }: { user: AppUser }) {
   const [passenger, setPassenger] = useState(false);
   const [heatOn, setHeatOn] = useStored('heat', false);
   const [heat, setHeat] = useState<db.HeatCell[]>([]);
+  // exemplo de comunidade (simulado) para testar e apresentar o mapa de calor
+  const [heatSim, setHeatSim] = useStored('heat-sim', false);
   const [collapsed, setCollapsed] = useState(false);
   const theme = useTheme();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -489,7 +492,7 @@ function Shell({ user }: { user: AppUser }) {
         live={livePos}
         trail={live.state.active ? live.state.trail : []}
         columns={live.state.active || summary ? live.state.columns : []}
-        heat={heatOn ? heat : null}
+        heat={heatOn ? (heatSim && bounds ? [...heat, ...simulateHeat(bounds, zones, selectedRoute?.coordinates)] : heat) : null}
         chargers={chargers}
         liveIntensity={live.state.level === 'high' ? 1 : live.state.level === 'moderate' ? 0.5 : Math.min(0.25, live.state.speedKmh / 240)}
         liveLevel={live.state.level}
@@ -557,7 +560,26 @@ function Shell({ user }: { user: AppUser }) {
 
       {user.demo && tab === 'trip' && !live.state.active && (
         <div className="absolute right-4 top-[4.75rem] z-20 hidden max-w-xs rounded-xl border border-amber/40 bg-panel/90 px-3 py-2 text-xs text-amber lg:block">
-          Modo demonstração: os dados ficam só neste navegador. Configure o Supabase para ter login e histórico na nuvem.
+          Testando sem conta: os dados ficam só neste navegador. Crie uma conta para salvar viagens e ranking na nuvem.
+        </div>
+      )}
+
+      {tab === 'trip' && !live.state.active && !isDesktop && (
+        <div className="absolute right-3 top-[4.6rem] z-20 flex flex-col items-end gap-1.5">
+          <button type="button" onClick={() => setHeatOn(!heatOn)} aria-pressed={heatOn} className={`glass flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium ${heatOn ? 'border-eco text-eco' : 'border-line text-white'}`}>
+            <Flame className="h-3.5 w-3.5" /> Calor
+          </button>
+          {heatOn && (
+            <button type="button" onClick={() => setHeatSim(!heatSim)} aria-pressed={heatSim} className={`glass rounded-full border px-3 py-1.5 text-xs font-medium ${heatSim ? 'border-amber text-amber' : 'border-line text-white'}`}>
+              {heatSim ? 'Exemplo ligado' : 'Simular comunidade'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {heatOn && heatSim && tab === 'trip' && (
+        <div className="pointer-events-none absolute bottom-24 left-1/2 z-10 -translate-x-1/2 rounded-full border border-amber/40 bg-panel/85 px-3 py-1 text-[11px] text-amber lg:bottom-16">
+          Mapa de calor de exemplo: simulação de cerca de 500 motoristas, não são dados reais
         </div>
       )}
 
@@ -568,6 +590,13 @@ function Shell({ user }: { user: AppUser }) {
               <Flame className="h-3.5 w-3.5" /> Mapa de calor
             </button>
           </li>
+          {heatOn && (
+            <li>
+              <button type="button" onClick={() => setHeatSim(!heatSim)} aria-pressed={heatSim} className={`rounded-full border px-2.5 py-1 font-medium transition ${heatSim ? 'border-amber bg-amber/15 text-amber' : 'border-line text-white hover:bg-white/10'}`}>
+                {heatSim ? 'Exemplo ligado (simulação)' : 'Simular comunidade'}
+              </button>
+            </li>
+          )}
           {(Object.keys(RISK_META) as RiskType[]).map((t) => (
             <li key={t} className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: RISK_META[t].color }} />{RISK_META[t].label}</li>
           ))}

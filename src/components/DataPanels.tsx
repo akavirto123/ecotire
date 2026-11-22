@@ -541,10 +541,10 @@ export function GaragePanel({ vehicles, vehicleId, onSelect, onAdd, onDelete, my
       </header>
 
       {current && (
-        <div className="card relative grid items-center gap-2 overflow-hidden p-2 sm:grid-cols-[1.5fr_1fr]">
-          <div className="emboss absolute -left-2 top-1 text-[5.5rem]" aria-hidden="true">GARAGEM</div>
-          <Car3D paint={paintOf(current)} body={bodyTypeOf(current)} theme={theme} className="h-60 w-full sm:h-80" />
-          <div className="relative p-3">
+        <div className="card relative grid grid-cols-1 items-center gap-2 overflow-hidden p-2 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+          <div className="emboss pointer-events-none absolute -left-2 top-1 max-w-full overflow-hidden text-[3.5rem] sm:text-[5.5rem]" aria-hidden="true">GARAGEM</div>
+          <Car3D paint={paintOf(current)} body={bodyTypeOf(current)} theme={theme} className="h-60 w-full min-w-0 sm:h-80" />
+          <div className="relative min-w-0 p-3">
             <div className="text-xs text-mist">Veículo selecionado · arraste para girar</div>
             <div className="font-display text-2xl font-semibold">{current.name}</div>
             <p className="text-sm text-mist">{current.description}</p>

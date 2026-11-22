@@ -12,7 +12,17 @@ export function createStage(el: HTMLElement) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
-  el.appendChild(renderer.domElement);
+  // o canvas não pode ditar o tamanho do layout: sem isso, em telas com densidade > 1
+  // ele crescia a cada redimensionamento (largura × dpr) e o carro sumia para fora da tela
+  const cv = renderer.domElement;
+  cv.style.position = 'absolute';
+  cv.style.inset = '0';
+  cv.style.width = '100%';
+  cv.style.height = '100%';
+  cv.style.display = 'block';
+  if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+  el.style.overflow = 'hidden';
+  el.appendChild(cv);
   const scene = new THREE.Scene();
   const pmrem = new THREE.PMREMGenerator(renderer);
   const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
