@@ -562,7 +562,7 @@ export function GaragePanel({ vehicles, vehicleId, onSelect, onAdd, onDelete, my
 
       <div className="card relative overflow-hidden p-3">
         <div className="mb-1 text-xs text-mist">Pneu em 3D · as partículas ilustram o PM2.5 estimado: mexa nos controles e veja a emissão mudar</div>
-        <Tire3D intensity={aggr} speedKmh={speed} theme={theme} className="h-60 w-full min-w-0 sm:h-72" />
+        <Tire3D intensity={aggr} speedKmh={speed} theme={theme} className="h-64 w-full min-w-0 sm:h-80" />
         <div className="mt-2 grid gap-3 sm:grid-cols-2">
           <label className="text-xs text-mist">
             Agressividade da condução: {Math.round(aggr * 100)}%
@@ -573,6 +573,15 @@ export function GaragePanel({ vehicles, vehicleId, onSelect, onAdd, onDelete, my
             <input type="range" min={10} max={120} step={5} value={speed} onChange={(e) => setSpeed(Number(e.target.value))} className="mt-1 w-full accent-[var(--color-eco)]" />
           </label>
         </div>
+        {(() => {
+          const e = Math.min(1, aggr * 0.75 + Math.min(1.2, speed / 100) * 0.35);
+          const [label, color] = e < 0.4 ? ['baixa', '#34d399'] : e < 0.7 ? ['moderada', '#fbbf24'] : ['alta', '#fb7185'];
+          return (
+            <p className="mt-2 text-xs text-mist">
+              Emissão ilustrada: <span className="font-semibold" style={{ color }}>{label}</span>. Freadas e arrancadas fortes soltam mais borracha que a velocidade em si.
+            </p>
+          );
+        })()}
       </div>
 
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
