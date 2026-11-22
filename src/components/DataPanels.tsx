@@ -1,6 +1,7 @@
 import { Trophy, Award, BarChart3, CarFront, Check, ChevronDown, CircleDollarSign, Loader2, Camera, Copy, Gauge, Lock, MapPinned, Medal, Plus, RadioTower, Users, Route, ShieldAlert, Trash2, Wind } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Car3D, bodyTypeOf, paintOf } from '@/components/Car3D';
+import { Tire3D } from '@/components/Tire3D';
 import { useTheme } from '@/lib/theme';
 import { RiskIcon, Stat, fmtMg } from '@/components/TripPanels';
 import { AnimatedValue } from '@/components/ui';
@@ -521,6 +522,8 @@ export function GaragePanel({ vehicles, vehicleId, onSelect, onAdd, onDelete, my
   const [error, setError] = useState<string | null>(null);
   const current = vehicles.find((v) => v.id === vehicleId);
   const theme = useTheme();
+  const [aggr, setAggr] = useState(0.3); // 0 = suave, 1 = agressiva
+  const [speed, setSpeed] = useState(50); // km/h
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -556,6 +559,21 @@ export function GaragePanel({ vehicles, vehicleId, onSelect, onAdd, onDelete, my
           </div>
         </div>
       )}
+
+      <div className="card relative overflow-hidden p-3">
+        <div className="mb-1 text-xs text-mist">Pneu em 3D · as partículas ilustram o PM2.5 estimado: mexa nos controles e veja a emissão mudar</div>
+        <Tire3D intensity={aggr} speedKmh={speed} theme={theme} className="h-60 w-full min-w-0 sm:h-72" />
+        <div className="mt-2 grid gap-3 sm:grid-cols-2">
+          <label className="text-xs text-mist">
+            Agressividade da condução: {Math.round(aggr * 100)}%
+            <input type="range" min={0} max={1} step={0.05} value={aggr} onChange={(e) => setAggr(Number(e.target.value))} className="mt-1 w-full accent-[var(--color-eco)]" />
+          </label>
+          <label className="text-xs text-mist">
+            Velocidade: {speed} km/h
+            <input type="range" min={10} max={120} step={5} value={speed} onChange={(e) => setSpeed(Number(e.target.value))} className="mt-1 w-full accent-[var(--color-eco)]" />
+          </label>
+        </div>
+      </div>
 
       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
         {vehicles.map((v) => {
